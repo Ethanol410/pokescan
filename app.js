@@ -309,7 +309,7 @@ async function readName(snap) {
 // Rang maximal (sur ~18 600 cartes) pour qu'une carte proposée par la lecture du numéro soit
 // confirmée par l'image. Mesuré sur de vraies vidéos : bonne carte entre le rang 1 et ~1 500,
 // carte issue d'un numéro mal lu au-delà de 5 000.
-const VERIFY_MAX_RANK = 2500;
+const VERIFY_MAX_RANK = 1000; // calibré sur 68 images iPhone : bonne carte ≤ 1000 dans 2/3 des images, carte au hasard ~5 %
 
 // `manual` : gros bouton ou photo (on annonce clairement un échec) ; sinon scan auto (on continue en silence).
 async function identify(num, snap, manual = false) {

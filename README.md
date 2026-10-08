@@ -51,18 +51,20 @@ Quand la carte est immobile, l'appli essaie dans cet ordre :
 
 | Étape | Méthode |
 |---|---|
-| 1. Image | L'image de la carte est réduite à une empreinte de 12×16 pixels en couleur, comparée aux empreintes de 18 604 cartes françaises (TCGdex ; image anglaise quand la française manque). Reflets ignorés, plusieurs cadrages essayés. La carte est acceptée si elle est nettement plus proche que toutes les autres, et retrouvée sur deux images (ou une seule si l'écart est très net). Environ 20 ms par image. |
+| 1. Image | L'image de la carte est réduite à une empreinte de 12×16 pixels en couleur (moyennes exactes par bloc, même résultat sur iPhone et Android), comparée aux empreintes de 18 604 cartes françaises (TCGdex ; image anglaise quand la française manque). Reflets ignorés, plusieurs cadrages essayés. La carte est acceptée si elle est nettement plus proche que toutes les autres, et retrouvée sur deux images (ou une seule si l'écart est très net). Environ 20 ms par image. |
 | 2. Rééditions | Si la même illustration existe dans plusieurs extensions, l'appli lit le numéro pour choisir, sinon elle te montre les versions en image. |
 | 3. IA (option) | Avec une clé API Anthropic, si l'image ne suffit pas après ~1 s, la photo part à Claude Haiku, qui renvoie nom, numéro et extension. Une seule fois par carte. |
 | 4. Numéro | Sinon, Tesseract.js lit le numéro imprimé en bas (`133/128`) ; il est validé dès qu'il est lu deux fois en 8 secondes. Le total (`/128`) désigne l'extension. |
+| 5. Vérification | Le numéro lu est **contrôlé par l'image** : les cartes portant ce numéro sont classées parmi les 18 604 selon leurs contours (plus robustes aux reflets de toploader que les couleurs). Une carte qui ne ressemble pas à l'image est refusée : un numéro mal lu (`111/10`, `100/107` au lieu de `100/101`) ne donne plus de fausse carte ni de faux « absente de la base ». |
 | Prix | API TCGdex (gratuite, sans clé) : Cardmarket en € (mis à jour chaque jour), TCGplayer en $, prix par version (1re édition, reverse…). |
 | Hors ligne | Un service worker garde l'appli, la base d'images et les cartes déjà vues ; le lot et la clé restent sur le téléphone. |
 
 ### Fiabilité mesurée
 
-- Sur les cartes d'une vraie vidéo de téléphone (Électhor et Ectoplasma-ex de l'extension 30ᵉ Anniversaire, avec reflet de lampe) : toutes les images acceptées donnent la bonne carte, parmi 16 900 cartes ; les images sans carte sont toutes refusées.
+- Vidéo d'un vrai iPhone (Safari, cartes en toploader, 75 images) : aucune mauvaise carte acceptée par l'image ; les images sans carte sont toutes refusées. L'image seule reconnaît surtout les cartes récentes au dessin net (Électhor) ; les cartes brillantes sous plastique passent par le numéro.
+- Vérification du numéro par l'image : la bonne carte est classée 1ʳᵉ sur 18 604 dans un tiers des images et dans les 1 000 premières dans deux tiers ; une carte prise au hasard ne passe le contrôle qu'environ 1 fois sur 20.
 - Sur 300 cartes au hasard dégradées volontairement (flou, lumière, reflet, cadrage décalé) : environ 1 erreur pour 300 images, les autres sont reconnues ou refusées (le refus déclenche l'étape suivante).
-- Les anciennes cartes au cadre très uniforme (ex. Célébi de Triomphant) passent moins bien par l'image : le numéro ou l'IA prennent le relais.
+- Le plus fiable reste l'IA (option) pour les cartes brillantes, anciennes ou abîmées.
 
 ## Activer l'IA (optionnel)
 
@@ -87,9 +89,9 @@ Site statique, sans build : `index.html`, `app.js`, `match.js`, `sw.js`.
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v9`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v10`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
-**Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` + `index/cards-<version>.bin` (288 octets par carte). En local :
+**Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` (avec le numéro de version de l'algorithme, `algo` : l'appli ignore une base calculée avec un ancien algorithme) + `index/cards-<version>.bin` (288 octets par carte). En local :
 
 ```bash
 npm i --no-save playwright && npx playwright install chromium && node tools/build-index.mjs
