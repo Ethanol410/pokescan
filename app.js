@@ -309,6 +309,7 @@ async function readName(snap) {
 // Rang maximal (sur ~18 600 cartes) pour qu'une carte proposée par la lecture du numéro soit
 // confirmée par l'image. Mesuré sur de vraies vidéos : bonne carte entre le rang 1 et ~1 500,
 // carte issue d'un numéro mal lu au-delà de 5 000.
+const DECIDE = { minGap: 0.15 }; // reconnaissance par l'image seule : 0 erreur sur 132 images réelles
 const VERIFY_MAX_RANK = 1000; // calibré sur 68 images iPhone : bonne carte ≤ 1000 dans 2/3 des images, carte au hasard ~5 %
 
 // `manual` : gros bouton ou photo (on annonce clairement un échec) ; sinon scan auto (on continue en silence).
@@ -332,7 +333,7 @@ async function identify(num, snap, manual = false) {
     const views = video.videoWidth && !manual?.photo ? frameViews(video, frameRectInVideo())
       : frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height });
     // Cadrage normal + carte un peu plus petite (toploader) + un peu plus grande : 4 vues maximum.
-    const pick = [views[0], ...views[1].slice(-3)];
+    const pick = [views[0], ...views[1].slice(0, views.nloc), ...views[1].slice(-2)]; // carte repérée + cadre + 2 cadrages serrés (calibré)
     const ranks = new Map(matcher.M.verify(pick, cards.map((c) => c.id)).map((r) => [r.id, r.rank]));
     const indexed = cards.filter((c) => ranks.get(c.id) != null);
     const good = indexed.filter((c) => ranks.get(c.id) <= VERIFY_MAX_RANK).sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
@@ -396,7 +397,7 @@ async function scanOnce(manual) {
     // Gros bouton : l'image d'abord, puis l'IA (si clé), puis la lecture du numéro.
     if (manual && matcher.ready) {
       // Depuis la vidéo (et non l'instantané) pour pouvoir essayer aussi des cadrages plus larges.
-      const r = matcher.M.decide(...frameViews(video, frameRectInVideo()));
+      const r = matcher.M.decide(...frameViews(video, frameRectInVideo()), DECIDE);
       if (r.ok && (await identifyFromMatch(r, snap))) return;
     }
     if (manual && load("apikey", "")) {
@@ -507,17 +508,39 @@ const meanDiff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += 
 const spread = (a) => { const m = a.reduce((s, v) => s + v, 0) / a.length; return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length); };
 const setReady = (on) => frame.classList.toggle("ready", on);
 
-// Empreinte de la carte dans le cadre + variantes de cadrage (carte un peu trop proche, trop loin
-// ou décalée) : la reconnaissance garde la meilleure. Les variantes qui sortent de l'image sont ignorées.
+// Empreinte de la carte : d'abord la carte repérée dans l'image (CardLocate, utile quand elle ne
+// remplit pas le cadre), puis le cadre lui-même et des variantes de cadrage (carte un peu trop
+// proche, trop loin ou décalée). La reconnaissance garde la meilleure. Les variantes qui sortent
+// de l'image sont ignorées.
+let locCache = null;
+function locateCard(source, rect) {
+  if (!window.CardLocate) return null;
+  const now = Date.now();
+  // sur la vidéo, la carte est immobile quand on scanne : on garde la position 0,6 s
+  if (source === video && locCache && now - locCache.t < 600) return locCache.loc;
+  let loc = null;
+  try { loc = CardLocate.locate(source, rect); } catch {}
+  if (source === video) locCache = { t: now, loc };
+  return loc;
+}
 function frameViews(source, rect) {
   const W = source.videoWidth || source.width, H = source.videoHeight || source.height;
-  const base = CardMatch.describe(source, rect), extra = [];
-  for (const [s, dy] of [[1.12, 0], [1.25, 0], [1.25, 0.08], [1.12, 0.06], [0.9, 0], [0.85, 0]]) {
-    const w = rect.w * s, h = rect.h * s;
-    const x = rect.x + (rect.w - w) / 2, y = rect.y + (rect.h - h) / 2 + rect.h * dy;
-    if (x >= 0 && y >= 0 && x + w <= W && y + h <= H) extra.push(CardMatch.describe(source, { x, y, w, h }));
+  const inside = (r) => r.x >= 0 && r.y >= 0 && r.x + r.w <= W && r.y + r.h <= H;
+  const views = [];
+  const loc = locateCard(source, rect);
+  let nloc = 0;
+  if (loc) for (const s of [1, 0.97, 1.03]) {
+    const r = { w: loc.w * s, h: loc.h * s }; r.x = loc.x + (loc.w - r.w) / 2; r.y = loc.y + (loc.h - r.h) / 2;
+    if (inside(r)) { views.push(CardMatch.describe(source, r)); nloc++; }
   }
-  return [base, extra];
+  views.push(CardMatch.describe(source, rect));
+  for (const [s, dy] of [[1.12, 0], [1.25, 0], [1.25, 0.08], [1.12, 0.06], [0.9, 0], [0.85, 0]]) {
+    const r = { w: rect.w * s, h: rect.h * s }; r.x = rect.x + (rect.w - r.w) / 2; r.y = rect.y + (rect.h - r.h) / 2 + rect.h * dy;
+    if (inside(r)) views.push(CardMatch.describe(source, r));
+  }
+  const out = [views[0], views.slice(1)];
+  out.nloc = nloc; // dans extra : les autres vues « carte repérée » puis le cadre
+  return out;
 }
 
 async function autoStep() {
@@ -529,7 +552,7 @@ async function autoStep() {
     else { setReady(false); return; }
   }
   if (auto.aiLast && meanDiff(t, auto.aiLast) > 22) auto.aiArmed = true;
-  if (moving) { auto.stableSince = 0; auto.votes = []; setReady(false); return; }
+  if (moving) { auto.stableSince = 0; auto.votes = []; locCache = null; setReady(false); return; }
   auto.stableSince ||= now;
   if (spread(t) < 20) { setReady(false); return; } // cadre vide ou uni
   setReady(true);
@@ -538,7 +561,7 @@ async function autoStep() {
 
   // 1. Image
   if (matcher.ready) {
-    const r = matcher.M.decide(...frameViews(video, frameRectInVideo()));
+    const r = matcher.M.decide(...frameViews(video, frameRectInVideo()), DECIDE);
     if (r.ok) {
       auto.votes = auto.votes.filter((v) => now - v.t < 2500);
       auto.votes.push({ id: r.best.id, t: now });
@@ -583,7 +606,7 @@ async function scanPhoto(file) {
   const snap = snapshot(im, { x: 0, y: 0, w: im.naturalWidth, h: im.naturalHeight });
   try {
     if (matcher.ready) {
-      const r = matcher.M.decide(...frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height }));
+      const r = matcher.M.decide(...frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height }), DECIDE);
       if (r.ok && (await identifyFromMatch(r, snap))) return;
     }
     if (load("apikey", "")) {
@@ -780,17 +803,35 @@ function tablesHTML(c) {
   return out;
 }
 
+// Liens vers les sites : Cardmarket ouvre directement la fiche du produit (identifiant fourni par
+// TCGdex), eBay les annonces en cours (les ventes réussies demandent un compte eBay), PriceCharting
+// les dernières ventes eBay sans compte (base en anglais : le nom anglais est chargé à part).
+function cardmarketId(c) {
+  const direct = c.pricing?.cardmarket?.idProduct;
+  if (direct) return direct;
+  for (const v of c.variants_detailed || []) if (v.pricing?.cardmarket?.idProduct) return v.pricing.cardmarket.idProduct;
+  return null;
+}
 function linksHTML(c) {
   const official = c.set?.cardCount?.official;
   const q = `${c.name} ${c.localId}${official ? "/" + official : ""}`;
   const e = encodeURIComponent;
+  const cmId = cardmarketId(c);
+  const num = String(parseInt(c.localId, 10) || c.localId);
   const links = [
-    ["eBay · ventes réussies", `https://www.ebay.fr/sch/i.html?_nkw=${e(q)}&LH_Sold=1&LH_Complete=1&_sop=13`],
-    ["Cardmarket", `https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${e(c.name + " " + (c.set?.name || ""))}`],
-    ["Vinted", `https://www.vinted.fr/catalog?search_text=${e(q)}`],
-    ["Leboncoin", `https://www.leboncoin.fr/recherche?text=${e(q)}`],
+    ["Cardmarket · fiche de la carte", cmId ? `https://www.cardmarket.com/fr/Pokemon/Products?idProduct=${cmId}`
+      : `https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${e(c.name)}`, "cm"],
+    ["Ventes eBay récentes · PriceCharting", `https://www.pricecharting.com/search-products?type=prices&q=${e(c.name + " " + num + (official ? "/" + official : ""))}`, "pc"],
+    ["eBay · annonces", `https://www.ebay.fr/sch/i.html?_nkw=${e(q)}&_sop=15`, "eb"],
+    ["Vinted", `https://www.vinted.fr/catalog?search_text=${e(q)}`, "vi"],
+    ["Leboncoin", `https://www.leboncoin.fr/recherche?text=${e(q)}`, "lb"],
   ];
-  return links.map(([l, u]) => `<a class="btn" href="${u}" target="_blank" rel="noopener">${l}</a>`).join("");
+  // PriceCharting ne connaît que les noms anglais : on remplace le nom dès qu'on l'a
+  fetch(`${API.replace("/fr", "/en")}/cards/${e(c.id)}`).then((r) => r.ok ? r.json() : null).then((en) => {
+    const a = document.querySelector('.links a[data-k="pc"]');
+    if (en?.name && a) a.href = `https://www.pricecharting.com/search-products?type=prices&q=${e(en.name + " " + num + (official ? "/" + official : ""))}`;
+  }).catch(() => {});
+  return links.map(([l, u, k]) => `<a class="btn" data-k="${k}" href="${u}" target="_blank" rel="noopener">${l}</a>`).join("");
 }
 
 function verdict(asked, ref) {

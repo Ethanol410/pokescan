@@ -1,7 +1,7 @@
 /* Service worker PokéScan : l'appli s'ouvre même sans réseau,
    et les cartes déjà consultées restent disponibles hors ligne. */
-const VERSION = "pokescan-v10";
-const SHELL = ["./", "index.html", "app.js", "match.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
+const VERSION = "pokescan-v11";
+const SHELL = ["./", "index.html", "app.js", "match.js", "locate.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

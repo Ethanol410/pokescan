@@ -36,12 +36,16 @@ Sur la bande : touche-la pour ouvrir la **fiche complète**, ou touche **+** pou
 Sur la fiche d'une carte :
 - **Prix demandé par le vendeur** : tape son prix, l'appli répond *bonne affaire* (30 % ou plus sous Cardmarket), *prix correct* ou *trop cher*.
 - **Ce n'est pas la bonne carte ?** : ouvre la recherche pour corriger.
-- **Dernières ventes et annonces** : liens vers les ventes réussies eBay, Cardmarket, Vinted et Leboncoin, pré-remplis avec la carte.
+- **Dernières ventes et annonces** :
+  - **Cardmarket** ouvre directement la fiche de la carte (identifiant Cardmarket fourni par TCGdex), plus une recherche approximative ;
+  - **Ventes eBay récentes · PriceCharting** : prix des dernières ventes eBay, sans compte (recherche par le nom anglais de la carte) ;
+  - **eBay** : annonces en cours, moins chères d'abord (le filtre « ventes réussies » d'eBay demande un compte) ;
+  - **Vinted** et **Leboncoin**, pré-remplis avec la carte.
 
 Réglages utiles : **mode rafale** (bande en bas, activé par défaut ; désactivé, chaque carte ouvre sa fiche complète), **bip** et **vibrations**. Sur Android, les vibrations passent par le vibreur. Sur iPhone, Safari n'a pas d'API de vibration : l'appli utilise le petit « tic » des interrupteurs iOS (iOS 17.4 ou plus récent), garanti après un toucher, à vérifier pour le scan automatique.
 
 ### Conseils de scan
-- Remplis bien le cadre avec la carte, bien droite.
+- Tiens la carte bien droite, de préférence en remplissant le cadre (elle est retrouvée même plus petite, mais le numéro se lit mieux de près).
 - Évite la lampe et les reflets de pochette ; incline légèrement la carte si besoin.
 - Si rien ne se passe après 2-3 secondes, utilise le gros bouton jaune ou la loupe.
 
@@ -51,6 +55,7 @@ Quand la carte est immobile, l'appli essaie dans cet ordre :
 
 | Étape | Méthode |
 |---|---|
+| 0. Repérage | L'appli cherche la carte dans l'image (le rectangle au format carte dont le contour est le plus net), même si elle ne remplit pas le cadre ou est décalée. Les étapes suivantes travaillent sur la carte seule, sans la main autour. |
 | 1. Image | L'image de la carte est réduite à une empreinte de 12×16 pixels en couleur (moyennes exactes par bloc, même résultat sur iPhone et Android), comparée aux empreintes de 18 604 cartes françaises (TCGdex ; image anglaise quand la française manque). Reflets ignorés, plusieurs cadrages essayés. La carte est acceptée si elle est nettement plus proche que toutes les autres, et retrouvée sur deux images (ou une seule si l'écart est très net). Environ 20 ms par image. |
 | 2. Rééditions | Si la même illustration existe dans plusieurs extensions, l'appli lit le numéro pour choisir, sinon elle te montre les versions en image. |
 | 3. IA (option) | Avec une clé API Anthropic, si l'image ne suffit pas après ~1 s, la photo part à Claude Haiku, qui renvoie nom, numéro et extension. Une seule fois par carte. |
@@ -61,9 +66,9 @@ Quand la carte est immobile, l'appli essaie dans cet ordre :
 
 ### Fiabilité mesurée
 
-- Vidéo d'un vrai iPhone (Safari, cartes en toploader, 75 images) : aucune mauvaise carte acceptée par l'image ; les images sans carte sont toutes refusées. L'image seule reconnaît surtout les cartes récentes au dessin net (Électhor) ; les cartes brillantes sous plastique passent par le numéro.
-- Vérification du numéro par l'image : la bonne carte est classée 1ʳᵉ sur 18 604 dans un tiers des images et dans les 1 000 premières dans deux tiers ; une carte prise au hasard ne passe le contrôle qu'environ 1 fois sur 20.
-- Sur 300 cartes au hasard dégradées volontairement (flou, lumière, reflet, cadrage décalé) : environ 1 erreur pour 300 images, les autres sont reconnues ou refusées (le refus déclenche l'étape suivante).
+Sur 132 images de trois vraies vidéos d'iPhone (Safari, cartes en toploader, holos de l'extension 30ᵉ Anniversaire, anciennes cartes EX) :
+- **Image seule** : aucune mauvaise carte acceptée ; les images sans carte sont toutes refusées. Elle reconnaît surtout les cartes au dessin net (Électhor) ; les holos passent par le numéro.
+- **Numéro + vérification par l'image** : grâce au repérage de la carte, la bonne carte passe le contrôle dans 3 images sur 4 (contre 2 sur 3 avant), et sur au moins une image pour chacune des 13 cartes testées ; une carte prise au hasard ne passe qu'environ 1 fois sur 20.
 - Le plus fiable reste l'IA (option) pour les cartes brillantes, anciennes ou abîmées.
 
 ## Activer l'IA (optionnel)
@@ -83,13 +88,13 @@ Coût : environ 1 centime pour 100 scans. La clé reste sur ton téléphone et n
 
 ## Développement
 
-Site statique, sans build : `index.html`, `app.js`, `match.js`, `sw.js`.
+Site statique, sans build : `index.html`, `app.js`, `match.js`, `locate.js`, `sw.js`.
 
 ```bash
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v10`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v11`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
 **Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` (avec le numéro de version de l'algorithme, `algo` : l'appli ignore une base calculée avec un ancien algorithme) + `index/cards-<version>.bin` (288 octets par carte). En local :
 
@@ -102,6 +107,7 @@ npm i --no-save playwright && npx playwright install chromium && node tools/buil
 - `index.html` : interface (styles inclus)
 - `app.js` : caméra, scan auto, IA, lecture du numéro, recherche, fiche prix, rafale, lot, réglages
 - `match.js` : empreintes d'images et recherche dans la base
+- `locate.js` : repérage de la carte dans l'image
 - `index/` : base d'images (générée, ne pas modifier à la main)
 - `tools/build-index.mjs` + `.github/workflows/index.yml` : construction de la base
 - `sw.js` : fonctionnement hors ligne
