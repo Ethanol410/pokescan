@@ -1,0 +1,36 @@
+# Recalcule l'index d'images des cartes chaque lundi (nouvelles extensions incluses),
+# et à chaque modification du code de reconnaissance. Le commit déclenche le déploiement Vercel.
+name: Index des cartes
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+  push:
+    branches: [main]
+    paths: ["match.js", "tools/build-index.mjs", ".github/workflows/index.yml"]
+permissions:
+  contents: write
+concurrency:
+  group: index
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm i --no-save playwright@1.47.2
+      - run: npx playwright install --with-deps chromium
+      - run: node tools/build-index.mjs
+      - name: Enregistrer l'index
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A index
+          if git diff --cached --quiet; then echo "Index inchangé"; exit 0; fi
+          git commit -m "Index des cartes mis à jour"
+          git pull --rebase origin main
+          git push

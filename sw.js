@@ -1,13 +1,13 @@
 /* Service worker PokéScan : l'appli s'ouvre même sans réseau,
    et les cartes déjà consultées restent disponibles hors ligne. */
-const VERSION = "pokescan-v6";
-const SHELL = ["./", "index.html", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
+const VERSION = "pokescan-v7";
+const SHELL = ["./", "index.html", "app.js", "match.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== "pokescan-index").map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 async function networkFirst(req) {
@@ -37,6 +37,19 @@ async function staleWhileRevalidate(req) {
   return hit || update;
 }
 
+// Garde un seul index en cache (environ 6 Mo) : le nouveau remplace l'ancien.
+async function indexFile(req) {
+  const cache = await caches.open("pokescan-index");
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok) {
+    for (const k of await cache.keys()) await cache.delete(k);
+    await cache.put(req, res.clone());
+  }
+  return res;
+}
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
@@ -45,5 +58,8 @@ self.addEventListener("fetch", (e) => {
   if (url.hostname === "assets.tcgdex.net" || url.hostname === "cdn.jsdelivr.net" ||
       url.hostname.endsWith("gstatic.com") || url.hostname === "fonts.googleapis.com" ||
       url.hostname.endsWith("projectnaptha.com")) return e.respondWith(cacheFirst(req));  // images, OCR, polices
+  // Index d'images : le fichier change de nom à chaque mise à jour, on le garde tel quel.
+  if (url.origin === location.origin && /\/index\/cards-[\w]+\.bin$/.test(url.pathname)) return e.respondWith(indexFile(req));
+  if (url.origin === location.origin && url.pathname.endsWith("/index/cards.json")) return e.respondWith(networkFirst(req));
   if (url.origin === location.origin) return e.respondWith(staleWhileRevalidate(req));      // l'appli elle-même
 });

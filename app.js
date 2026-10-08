@@ -32,8 +32,10 @@ const img = (base, q = "low") => base ? `${base}/${q}.webp` : "";
 const buzz = (p) => { try { navigator.vibrate?.(p); } catch {} };
 
 // Message sous le cadre ; busy = petite roue qui tourne devant (une recherche est en cours).
-function hint(html, busy = false) { hintEl.innerHTML = html; hintEl.classList.toggle("busy", busy); }
-const IDLE_HINT = () => load("apikey", "") ? "Mode IA : tiens la carte immobile une seconde dans le cadre" : "Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro";
+function hint(html, busy = false) { hintEl.innerHTML = html; hintEl.classList.toggle("busy", busy); document.body.classList.toggle("hint-busy", busy); }
+const IDLE_HINT = () => (typeof matcher !== "undefined" && matcher.ready) || load("apikey", "")
+  ? "Tiens la carte immobile dans le cadre, sans reflet"
+  : "Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro";
 let toastTimer;
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("on");
@@ -263,7 +265,7 @@ async function identifyWithAI(snap) {
   if (!cards.length) { hint(IDLE_HINT()); return false; }
   buzz(40);
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
-  if (cards.length === 1) showCard(cards[0].pricing ? cards[0] : await api(`/cards/${encodeURIComponent(cards[0].id)}`));
+  if (cards.length === 1) presentCard(cards[0].pricing ? cards[0] : await api(`/cards/${encodeURIComponent(cards[0].id)}`));
   else showPicker(cards, ai.name || "");
   hint(IDLE_HINT());
   return true;
@@ -298,7 +300,7 @@ async function identify(num, snap) {
   }
   buzz(40);
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
-  if (cards.length === 1) showCard(cards[0]);
+  if (cards.length === 1) presentCard(cards[0]);
   else showPicker(cards, `${num.n}/${num.t}`);
   hint(IDLE_HINT());
   } finally { frame.classList.remove("scanning"); }
@@ -336,7 +338,11 @@ async function scanOnce(manual) {
   frame.classList.add("reading");
   try {
     const snap = snapshot(video, frameRectInVideo());
-    // Gros bouton + clé API : l'IA d'abord (plus fiable), la lecture locale en secours.
+    // Gros bouton : l'image d'abord, puis l'IA (si clé), puis la lecture du numéro.
+    if (manual && matcher.ready) {
+      const r = matcher.M.decide(...frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height }));
+      if (r.ok && (await identifyFromMatch(r, snap))) return;
+    }
     if (manual && load("apikey", "")) {
       try { if (await identifyWithAI(snap)) return; }
       catch (e) { toast(e.message); }
@@ -370,11 +376,69 @@ async function scanOnce(manual) {
   }
 }
 
-/* Scan auto avec l'IA : on attend que la carte soit immobile ~0,7 s, on envoie UNE image,
-   puis on attend que la scène change (nouvelle carte) avant d'en renvoyer une. */
-const aiScan = { prev: null, stableSince: 0, armed: true, lastSent: null, broken: false, busy: false };
+/* ---------- Reconnaissance par l'image (index des cartes, voir match.js) ---------- */
+const matcher = { ready: false, loading: false, M: null, meta: null, failed: false };
+async function loadIndex() {
+  if (matcher.ready || matcher.loading || !window.CardMatch) return;
+  matcher.loading = true;
+  try {
+    const meta = await (await fetch("index/cards.json", { cache: "no-cache" })).json();
+    const r = await fetch("index/" + meta.file);
+    if (!r.ok) throw new Error(r.status);
+    const buf = new Uint8Array(await r.arrayBuffer());
+    matcher.M = new CardMatch.Matcher(meta, buf);
+    matcher.meta = { count: meta.count, built: meta.built };
+    matcher.ready = true;
+    if (!hintEl.classList.contains("busy")) hint(IDLE_HINT());
+  } catch (e) {
+    matcher.failed = true; // pas d'index (pas encore construit, ou hors ligne) : lecture du numéro et IA seulement
+    console.warn("Index des cartes indisponible", e);
+  } finally { matcher.loading = false; refreshIndexUI(); }
+}
+function refreshIndexUI() {
+  const el = $("index-status");
+  if (!el) return;
+  el.textContent = matcher.ready
+    ? `Base d'images : ${matcher.meta.count.toLocaleString("fr-FR")} cartes, mise à jour le ${new Date(matcher.meta.built).toLocaleDateString("fr-FR")}. Elle reste sur ce téléphone.`
+    : matcher.loading ? "Base d'images : téléchargement en cours (environ 6 Mo, une seule fois)…"
+    : "Base d'images indisponible pour l'instant : l'appli lit le numéro de la carte à la place.";
+}
+
+// Carte reconnue par l'image : on charge sa fiche (prix). Si la même illustration existe dans
+// plusieurs extensions, on essaie de lire le numéro pour choisir, sinon on demande.
+async function identifyFromMatch(r, snap) {
+  frame.classList.add("scanning");
+  try {
+    hint(`Carte reconnue : <span class="num">${esc(r.best.name)}</span>, recherche du prix…`, true);
+    let ids = r.candidates.map((c) => c.id);
+    if (ids.length > 1 && snap) {
+      const num = await readNumber(snap, [0, 1]).catch(() => null);
+      if (num) {
+        const hit = ids.filter((id) => parseInt(id.split("-").pop(), 10) === num.n);
+        if (hit.length === 1) ids = hit;
+      }
+    }
+    const cards = (await Promise.all(ids.slice(0, 8).map((id) => api(`/cards/${encodeURIComponent(id)}`).catch(() => null)))).filter(Boolean);
+    if (!cards.length) { hint("Carte reconnue, mais pas de réseau pour charger le prix. Réessaie dans un instant."); return false; }
+    if (cards.length === 1) presentCard(cards[0]);
+    else { presentPick(); showPicker(cards, r.best.name); }
+    hint(IDLE_HINT());
+    return true;
+  } finally { frame.classList.remove("scanning"); }
+}
+function presentPick() { beep(); try { state.waitChange = thumb(); } catch {} }
+
+/* ---------- Scan automatique ----------
+   À chaque image : on attend que la carte soit immobile, puis on essaie dans l'ordre
+   1. la reconnaissance par l'image (rapide, gratuite, sans réseau),
+   2. l'IA si une clé est enregistrée (une seule fois par carte),
+   3. la lecture du numéro (vote sur plusieurs images).
+   Une fois une carte reconnue, on attend que la scène change (carte suivante). */
+const aiScan = { broken: false, busy: false };
+const auto = { prev: null, stableSince: 0, votes: [], aiArmed: true, aiLast: null, tick: 0 };
+let thumbCanvas;
 function thumb() {
-  const c = aiScan.canvas || (aiScan.canvas = document.createElement("canvas"));
+  const c = thumbCanvas || (thumbCanvas = document.createElement("canvas"));
   c.width = 24; c.height = 34;
   const r = frameRectInVideo();
   const ctx = c.getContext("2d", { willReadFrequently: true });
@@ -385,37 +449,70 @@ function thumb() {
 }
 const meanDiff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
 const spread = (a) => { const m = a.reduce((s, v) => s + v, 0) / a.length; return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length); };
+const setReady = (on) => frame.classList.toggle("ready", on);
 
-async function aiAutoStep() {
-  if (aiScan.busy) return;
-  const t = thumb(), now = Date.now();
-  const moving = aiScan.prev ? meanDiff(t, aiScan.prev) > 7 : true;
-  aiScan.prev = t;
-  if (aiScan.lastSent && meanDiff(t, aiScan.lastSent) > 22) aiScan.armed = true; // nouvelle carte ou cadre vidé
-  if (moving) { aiScan.stableSince = 0; return; }
-  aiScan.stableSince ||= now;
-  if (!aiScan.armed || now - aiScan.stableSince < 700 || spread(t) < 20) return;
-  aiScan.armed = false; aiScan.lastSent = t; aiScan.busy = true;
-  frame.classList.add("reading");
-  try {
-    const snap = snapshot(video, frameRectInVideo());
-    if (!(await identifyWithAI(snap))) hint("Pas de carte reconnue. Bouge un peu la carte pour réessayer.");
-  } catch (e) {
-    toast(e.message);
-    if (/Clé API|401|crédit/i.test(e.message)) { aiScan.broken = true; hint("IA indisponible : lecture locale du numéro."); }
-  } finally {
-    frame.classList.remove("reading");
-    aiScan.busy = false;
+// Empreinte de la carte dans le cadre + variantes de cadrage (carte un peu trop proche, trop loin
+// ou décalée) : la reconnaissance garde la meilleure. Les variantes qui sortent de l'image sont ignorées.
+function frameViews(source, rect) {
+  const W = source.videoWidth || source.width, H = source.videoHeight || source.height;
+  const base = CardMatch.describe(source, rect), extra = [];
+  for (const [s, dy] of [[1.12, 0], [1.25, 0], [1.25, 0.08], [1.12, 0.06], [0.9, 0]]) {
+    const w = rect.w * s, h = rect.h * s;
+    const x = rect.x + (rect.w - w) / 2, y = rect.y + (rect.h - h) / 2 + rect.h * dy;
+    if (x >= 0 && y >= 0 && x + w <= W && y + h <= H) extra.push(CardMatch.describe(source, { x, y, w, h }));
   }
+  return [base, extra];
+}
+
+async function autoStep() {
+  const t = thumb(), now = Date.now();
+  const moving = auto.prev ? meanDiff(t, auto.prev) > 7 : true;
+  auto.prev = t;
+  if (state.waitChange) {
+    if (meanDiff(t, state.waitChange) > 22) state.waitChange = null; // carte retirée ou changée
+    else { setReady(false); return; }
+  }
+  if (auto.aiLast && meanDiff(t, auto.aiLast) > 22) auto.aiArmed = true;
+  if (moving) { auto.stableSince = 0; auto.votes = []; setReady(false); return; }
+  auto.stableSince ||= now;
+  if (spread(t) < 20) { setReady(false); return; } // cadre vide ou uni
+  setReady(true);
+
+  // 1. Image
+  if (matcher.ready) {
+    const r = matcher.M.decide(...frameViews(video, frameRectInVideo()));
+    if (r.ok) {
+      auto.votes = auto.votes.filter((v) => now - v.t < 2500);
+      auto.votes.push({ id: r.best.id, t: now });
+      if (r.strong || auto.votes.filter((v) => v.id === r.best.id).length >= 2) {
+        auto.votes = [];
+        await identifyFromMatch(r, snapshot(video, frameRectInVideo()));
+      } else hint(`Carte repérée : <span class="num">${esc(r.best.name)}</span>, ne bouge plus…`, true);
+      return;
+    }
+  }
+  // 2. IA (si clé), après un court moment sans résultat par l'image
+  const key = load("apikey", "");
+  if (key && !aiScan.broken) {
+    if (auto.aiArmed && now - auto.stableSince > (matcher.ready ? 1200 : 600)) {
+      auto.aiArmed = false; auto.aiLast = t; aiScan.busy = true;
+      try {
+        if (!(await identifyWithAI(snapshot(video, frameRectInVideo())))) hint("Pas de carte reconnue. Bouge un peu la carte pour réessayer.");
+      } catch (e) {
+        toast(e.message);
+        if (/Clé API|401|crédit/i.test(e.message)) { aiScan.broken = true; hint("IA indisponible : lecture locale."); }
+      } finally { aiScan.busy = false; }
+    }
+    return;
+  }
+  // 3. Lecture du numéro, une image sur deux pour garder le téléphone fluide
+  if (auto.tick++ % 2 === 0) await scanOnce(false);
 }
 
 async function autoLoop() {
-  const canRun = state.auto && !anySheetOpen() && !document.hidden && video.videoWidth && Date.now() > state.pausedUntil;
-  if (canRun) {
-    if (load("apikey", "") && !aiScan.broken) await aiAutoStep();
-    else await scanOnce(false);
-  }
-  setTimeout(autoLoop, canRun ? 200 : 500);
+  const canRun = state.auto && !anySheetOpen() && !document.hidden && video.videoWidth && Date.now() > state.pausedUntil && !manualScanning;
+  if (canRun) { try { await autoStep(); } catch (e) { console.warn(e); } }
+  setTimeout(autoLoop, canRun ? 150 : 500);
 }
 
 async function scanPhoto(file) {
@@ -427,6 +524,10 @@ async function scanPhoto(file) {
   // Sur une photo, on suppose que la carte remplit l'image.
   const snap = snapshot(im, { x: 0, y: 0, w: im.naturalWidth, h: im.naturalHeight });
   try {
+    if (matcher.ready) {
+      const r = matcher.M.decide(...frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height }));
+      if (r.ok && (await identifyFromMatch(r, snap))) return;
+    }
     if (load("apikey", "")) {
       try { if (await identifyWithAI(snap)) return; } catch (e) { toast(e.message); }
     }
@@ -453,6 +554,61 @@ function closeSheets() {
 }
 $("backdrop").addEventListener("click", closeSheets);
 document.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeSheets(); });
+
+/* ---------- Mode rafale : résultat en bas, bip, pas de double scan ---------- */
+let audioCtx = null;
+// iPhone : le son n'est autorisé qu'après un premier toucher, on prépare l'audio à ce moment-là.
+document.addEventListener("pointerdown", () => {
+  try { audioCtx ||= new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch {}
+}, { capture: true });
+function beep() {
+  if (!load("sound", true) || !audioCtx) return;
+  try {
+    const t = audioCtx.currentTime;
+    [[880, 0], [1320, 0.09]].forEach(([f, d]) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + d);
+      g.gain.exponentialRampToValueAtTime(0.25, t + d + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.12);
+      o.connect(g).connect(audioCtx.destination); o.start(t + d); o.stop(t + d + 0.14);
+    });
+  } catch {}
+}
+
+// Une carte vient d'être reconnue. En rafale : bande en bas et on continue ; sinon : fiche complète.
+function presentCard(c) {
+  beep(); buzz(40);
+  frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
+  try { state.waitChange = video.videoWidth ? thumb() : null; } catch { state.waitChange = null; }
+  if (load("rafale", true)) showResult(c);
+  else showCard(c);
+}
+
+function showResult(c) {
+  const el = $("result");
+  const official = c.set?.cardCount?.official;
+  const price = priceOf(c);
+  el.innerHTML = `<img alt="" src="${img(c.image)}" onerror="this.style.visibility='hidden'">
+    <button class="who" type="button" aria-label="Voir la fiche de ${esc(c.name)}"><b></b><span></span></button>
+    <span class="price num">${eur(price)}</span>
+    <button class="add" type="button" aria-label="Ajouter au lot" aria-pressed="false">+</button>`;
+  el.querySelector("b").textContent = c.name;
+  el.querySelector(".who span").textContent = `${c.set?.name || ""} · ${c.localId}${official ? "/" + official : ""} · toucher pour la fiche`;
+  el.querySelector(".who").addEventListener("click", () => showCard(c));
+  el.querySelector("img").addEventListener("click", () => showCard(c));
+  const add = el.querySelector(".add");
+  add.addEventListener("click", () => {
+    if (add.getAttribute("aria-pressed") === "true") return;
+    state.lot.unshift({ id: c.id, name: c.name, num: `${c.localId}${official ? "/" + official : ""}`, set: c.set?.name || "", image: c.image, price, asked: null });
+    save("lot", state.lot); renderLot();
+    add.setAttribute("aria-pressed", "true"); add.textContent = "✓";
+    toast(`${c.name} ajouté au lot`);
+  });
+  el.hidden = false;
+  el.style.animation = "none"; void el.offsetWidth; el.style.animation = "";
+  document.body.classList.add("has-result");
+}
 
 /* ---------- Fiche carte ---------- */
 function priceOf(c) {
@@ -712,13 +868,18 @@ $("photo").addEventListener("change", (e) => scanPhoto(e.target.files[0]));
 /* ---------- Réglages : clé API ---------- */
 function refreshKeyUI() {
   const has = !!load("apikey", "");
-  if (typeof aiScan !== "undefined") { aiScan.broken = false; aiScan.armed = true; }
-  hint(has ? "Mode IA : tiens la carte immobile une seconde dans le cadre" : "Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro");
+  aiScan.broken = false; auto.aiArmed = true;
+  if (!hintEl.classList.contains("busy")) hint(IDLE_HINT());
   $("open-settings").classList.toggle("ai", has);
-  $("key-status").textContent = has ? "IA activée : le gros bouton utilise Claude." : "Aucune clé : lecture locale gratuite uniquement.";
+  $("key-status").textContent = has ? "IA activée : elle prend le relais quand l'image et le numéro ne suffisent pas." : "Aucune clé : reconnaissance gratuite par l'image et le numéro.";
   $("key-status").classList.remove("err");
 }
-$("open-settings").addEventListener("click", () => { $("apikey").value = load("apikey", ""); refreshKeyUI(); openSheet("sheet-settings"); });
+$("opt-rafale").checked = load("rafale", true);
+$("opt-sound").checked = load("sound", true);
+$("opt-rafale").addEventListener("change", (e) => save("rafale", e.target.checked));
+$("opt-sound").addEventListener("change", (e) => { save("sound", e.target.checked); if (e.target.checked) beep(); });
+$("open-settings").addEventListener("click", () => {
+  refreshIndexUI(); $("apikey").value = load("apikey", ""); refreshKeyUI(); openSheet("sheet-settings"); });
 $("key-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const k = $("apikey").value.trim();
@@ -747,6 +908,7 @@ setAuto(state.auto);
 renderLot();
 refreshKeyUI();
 startCamera().then(autoLoop);
+loadIndex();
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 
 // Exposé pour les tests dans la console
