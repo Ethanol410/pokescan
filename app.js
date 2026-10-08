@@ -306,14 +306,46 @@ async function readName(snap) {
 }
 
 /* ---------- Identification ---------- */
-async function identify(num, snap) {
+// Rang maximal (sur ~18 600 cartes) pour qu'une carte proposée par la lecture du numéro soit
+// confirmée par l'image. Mesuré sur de vraies vidéos : bonne carte entre le rang 1 et ~1 500,
+// carte issue d'un numéro mal lu au-delà de 5 000.
+const VERIFY_MAX_RANK = 2500;
+
+// `manual` : gros bouton ou photo (on annonce clairement un échec) ; sinon scan auto (on continue en silence).
+async function identify(num, snap, manual = false) {
   frame.classList.add("scanning");
   try {
   hint(`Recherche de la carte <span class="num">${num.n}/${num.t}</span>…`, true);
   let cards;
   try { cards = await findByNumber(num.n, num.t); }
   catch (e) { hint(esc(e.message)); return; }
-  if (!cards.length) { showNotFound(`La carte ${num.n}/${num.t} n'est pas dans la base`); return; }
+  if (!cards.length) {
+    // Souvent un numéro mal lu : en scan auto on continue à chercher, sans fausse alerte.
+    if (manual) showNotFound(`Aucune carte ${num.n}/${num.t} dans la base`);
+    else hint(IDLE_HINT());
+    return;
+  }
+
+  // L'image confirme (ou non) le numéro lu, et choisit entre les cartes qui portent ce numéro.
+  if (matcher.ready) {
+    hint(`Vérification de la carte <span class="num">${num.n}/${num.t}</span> sur l'image…`, true);
+    const views = video.videoWidth && !manual?.photo ? frameViews(video, frameRectInVideo())
+      : frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height });
+    // Cadrage normal + carte un peu plus petite (toploader) + un peu plus grande : 4 vues maximum.
+    const pick = [views[0], ...views[1].slice(-3)];
+    const ranks = new Map(matcher.M.verify(pick, cards.map((c) => c.id)).map((r) => [r.id, r.rank]));
+    const indexed = cards.filter((c) => ranks.get(c.id) != null);
+    const good = indexed.filter((c) => ranks.get(c.id) <= VERIFY_MAX_RANK).sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
+    const unknown = cards.filter((c) => ranks.get(c.id) == null);
+    if (!good.length && !unknown.length) {
+      // Le numéro lu ne correspond pas à ce qu'on voit : probablement mal lu.
+      if (manual) showNotFound("Carte non reconnue");
+      else hint(IDLE_HINT());
+      return;
+    }
+    if (good.length && (good.length === 1 || ranks.get(good[1].id) > 4 * ranks.get(good[0].id)) && !unknown.length) cards = [good[0]];
+    else cards = [...good, ...unknown];
+  }
 
   if (cards.length > 1 && snap) {
     hint("Plusieurs extensions possibles, lecture du nom…", true);
@@ -381,13 +413,13 @@ async function scanOnce(manual) {
       return;
     }
     state.lastHit = now;
-    if (manual) { state.reads = []; await identify(num, snap); return; }
+    if (manual) { state.reads = []; await identify(num, snap, true); return; }
     // En mode auto, on vote : le premier numéro lu deux fois en 8 secondes l'emporte,
     // même si des lectures ratées ou fausses s'intercalent.
     const key = num.n + "/" + num.t;
     state.reads = state.reads.filter((r) => now - r.t < 8000);
     state.reads.push({ key, num, t: now });
-    if (state.reads.filter((r) => r.key === key).length >= 2) { state.reads = []; await identify(num, snap); }
+    if (state.reads.filter((r) => r.key === key).length >= 2) { state.reads = []; await identify(num, snap, false); }
     else hint(`Numéro lu : <span class="num">${key}</span>, vérification… ne bouge plus`, true);
   } catch (e) {
     console.warn(e);
@@ -405,6 +437,8 @@ async function loadIndex() {
   matcher.loading = true;
   try {
     const meta = await (await fetch("index/cards.json", { cache: "no-cache" })).json();
+    // Base calculée avec une ancienne version de l'empreinte (le temps qu'elle soit recalculée) : on ne l'utilise pas.
+    if ((meta.algo ?? 1) !== CardMatch.ALGO) throw new Error("base d'images en cours de mise à jour");
     const r = await fetch("index/" + meta.file);
     if (!r.ok) throw new Error(r.status);
     const buf = new Uint8Array(await r.arrayBuffer());
@@ -478,7 +512,7 @@ const setReady = (on) => frame.classList.toggle("ready", on);
 function frameViews(source, rect) {
   const W = source.videoWidth || source.width, H = source.videoHeight || source.height;
   const base = CardMatch.describe(source, rect), extra = [];
-  for (const [s, dy] of [[1.12, 0], [1.25, 0], [1.25, 0.08], [1.12, 0.06], [0.9, 0]]) {
+  for (const [s, dy] of [[1.12, 0], [1.25, 0], [1.25, 0.08], [1.12, 0.06], [0.9, 0], [0.85, 0]]) {
     const w = rect.w * s, h = rect.h * s;
     const x = rect.x + (rect.w - w) / 2, y = rect.y + (rect.h - h) / 2 + rect.h * dy;
     if (x >= 0 && y >= 0 && x + w <= W && y + h <= H) extra.push(CardMatch.describe(source, { x, y, w, h }));
@@ -556,7 +590,7 @@ async function scanPhoto(file) {
       try { if (await identifyWithAI(snap)) return; } catch (e) { toast(e.message); }
     }
     const num = await readNumber(snap);
-    if (num) return identify(num, snap);
+    if (num) return identify(num, snap, { photo: true });
     showNotFound();
   } catch (e) { hint("Erreur : " + esc(e.message)); }
 }
@@ -617,7 +651,7 @@ function showResult(c) {
   const price = priceOf(c);
   el.innerHTML = `<img alt="" src="${img(c.image)}" onerror="this.style.visibility='hidden'">
     <button class="who" type="button" aria-label="Voir la fiche de ${esc(c.name)}"><b></b><span></span></button>
-    <span class="price num">${eur(price)}</span>
+    <span class="price num">${priceLabel(c)}</span>
     <button class="add" type="button" aria-label="Ajouter au lot" aria-pressed="false">+</button>`;
   el.querySelector("b").textContent = c.name;
   el.querySelector(".who span").textContent = `${c.set?.name || ""} · ${c.localId}${official ? "/" + official : ""} · toucher pour la fiche`;
@@ -686,9 +720,19 @@ function errorBeep() {
 
 /* ---------- Fiche carte ---------- */
 function priceOf(c) {
-  const cm = c.pricing?.cardmarket;
-  if (!cm) return null;
-  return cm.trend || cm.avg || cm["trend-holo"] || cm.avg30 || null;
+  const pick = (cm) => cm && (cm.trend || cm.avg || cm["trend-holo"] || cm.avg30 || cm.avg7);
+  let p = pick(c.pricing?.cardmarket);
+  // Pas de prix pour la carte : on prend celui d'une de ses versions s'il existe.
+  if (!p) for (const v of c.variants_detailed || []) { p = pick(v.pricing?.cardmarket); if (p) break; }
+  return p || null;
+}
+// Libellé court du prix : Cardmarket en €, sinon TCGplayer en $, sinon « Prix ? ».
+function priceLabel(c) {
+  const p = priceOf(c);
+  if (p) return eur(p);
+  const tp = c.pricing?.tcgplayer;
+  const usdPrice = tp && Object.values(tp).find((v) => v && typeof v === "object" && v.marketPrice)?.marketPrice;
+  return usdPrice ? `${usd(usdPrice)} US` : "Prix ?";
 }
 
 function trendHTML(cm) {
@@ -774,7 +818,7 @@ function showCard(c) {
           <span class="chip num">${esc(c.localId)}${official ? "/" + official : ""}</span>
           ${c.rarity ? `<span class="chip">${esc(c.rarity)}</span>` : ""}
         </div>
-        <div class="tag"><b class="num">${eur(price)}</b><small>Tendance Cardmarket</small></div>
+        <div class="tag"><b class="num">${price ? eur(price) : priceLabel(c)}</b><small>${price ? "Tendance Cardmarket" : "Pas de prix Cardmarket"}</small></div>
         ${cm?.updated ? `<span class="updated">Prix du ${new Date(cm.updated).toLocaleDateString("fr-FR")}</span>` : `<span class="updated">Pas de prix Cardmarket pour cette carte</span>`}
       </div>
     </div>

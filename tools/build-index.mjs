@@ -24,16 +24,18 @@ await page.route("https://assets.tcgdex.net/**", async (route) => {
 // On se place sur le domaine de l'API pour que les requêtes vers TCGdex soient autorisées.
 await page.goto("https://api.tcgdex.net/v2/fr/sets");
 await page.addScriptTag({ path: new URL("../match.js", import.meta.url).pathname });
+const ALGO = await page.evaluate(() => CardMatch.ALGO);
 
 // Empreintes déjà calculées (index précédent) : on ne retélécharge que les nouvelles cartes.
 const dir = new URL("../index/", import.meta.url).pathname;
 let previous = {};
 try {
   const meta = JSON.parse(await fs.readFile(dir + "cards.json", "utf8"));
+  if (meta.algo !== ALGO) throw new Error(`calcul d'empreinte changé (${meta.algo ?? 1} → ${ALGO})`);
   const buf = await fs.readFile(dir + meta.file);
   meta.ids.forEach((id, k) => { previous[id] = buf.subarray(k * 288, (k + 1) * 288).toString("base64"); });
   console.log(`Index précédent : ${meta.ids.length} cartes réutilisables`);
-} catch { console.log("Pas d'index précédent : construction complète"); }
+} catch (e) { previous = {}; console.log("Construction complète : " + (e.message || "pas d'index précédent")); }
 
 page.on("console", (m) => { if (m.type() === "log") console.log("  " + m.text()); });
 const res = await page.evaluate(async (previous) => {
@@ -103,6 +105,7 @@ for (const f of await fs.readdir(dir)) if (/^cards-.*\.bin$/.test(f)) await fs.u
 await fs.writeFile(dir + `cards-${version}.bin`, buf);
 await fs.writeFile(dir + "cards.json", JSON.stringify({
   version, file: `cards-${version}.bin`, built: new Date().toISOString().slice(0, 10),
-  w: 12, h: 16, bits: 4, count: res.ids.length, ids: res.ids, names: res.names,
+  w: 12, h: 16, bits: 4, algo: ALGO,
+  count: res.ids.length, ids: res.ids, names: res.names,
 }));
 console.log(`index/cards-${version}.bin (${(buf.length / 1e6).toFixed(1)} Mo)`);
