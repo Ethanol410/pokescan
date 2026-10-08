@@ -1,65 +1,83 @@
 # PokéScan
 
-Web app à installer sur ton téléphone : tu vises une carte Pokémon, elle affiche son prix Cardmarket, l'évolution sur 30 jours, et te dit si le prix du vendeur est une bonne affaire. Pensée pour les braderies.
+Web app pour téléphone : tu vises une carte Pokémon (française), elle affiche son prix Cardmarket, l'évolution sur 30 jours, et te dit si le prix du vendeur est une bonne affaire. Pensée pour les braderies.
 
-**Appli en ligne : https://pokescan-gamma.vercel.app** (déployée sur Vercel depuis ce dépôt : chaque `git push` sur `main` la met à jour automatiquement).
+**Appli en ligne : https://pokescan-gamma.vercel.app**
 
-## Héberger ailleurs
+## Installer sur le téléphone
 
-La caméra ne fonctionne qu'en **HTTPS**. Autres options gratuites :
+1. Ouvre https://pokescan-gamma.vercel.app et autorise la caméra.
+2. Ajoute-la à l'écran d'accueil :
+   - **iPhone (Safari)** : bouton Partager → *Sur l'écran d'accueil*.
+   - **Android (Chrome)** : menu ⋮ → *Installer l'application*.
+3. Ouvre-la une première fois en Wi-Fi : le module de lecture des numéros (environ 10 Mo) se télécharge et reste sur le téléphone.
 
-### Option A — Netlify Drop (le plus simple)
-1. Va sur https://app.netlify.com/drop (crée un compte gratuit si demandé).
-2. Glisse-dépose **tout le dossier `PokeScan`** dans la page.
-3. Netlify te donne une adresse du type `https://xxx.netlify.app`. Ouvre-la sur ton téléphone.
+## Les boutons
 
-### Option B — GitHub Pages
-1. Crée un dépôt public sur GitHub (ex. `pokescan`) et envoie-y le contenu du dossier.
-2. Dans le dépôt : *Settings → Pages → Branch : main / root → Save*.
-3. L'adresse est `https://<ton-pseudo>.github.io/pokescan/`.
+| Bouton | Ce qu'il fait |
+|---|---|
+| **Pastille « Auto »** (verte = activée) | Scan automatique en continu. Sans clé IA : l'appli lit le numéro en bas de la carte et valide dès qu'elle l'a lu deux fois en 8 secondes. Avec une clé IA : dès que la carte reste immobile une seconde, une image part à l'IA, la fiche s'ouvre, puis l'appli attend la carte suivante. |
+| **Gros bouton jaune** | Scan immédiat de ce qui est dans le cadre, sans attendre. Avec une clé IA, il utilise l'IA. Sans clé, il essaie toutes les méthodes de lecture sur l'image et valide dès la première lecture (pas de vote). Si la caméra est indisponible, il ouvre l'appareil photo. Utile quand le mode auto est coupé ou n'arrive pas à valider. |
+| **Lot · n** | Les cartes ajoutées avec « Ajouter au lot » : valeur totale Cardmarket face au total demandé par le vendeur. Pratique pour un classeur ou un lot. |
+| **Loupe** | Recherche à la main par nom et/ou numéro (ex. `4/102`). |
+| **Curseurs** | Réglages : clé IA (l'icône devient jaune quand elle est active). |
+| **Éclair** | Lampe, si le téléphone le permet. À éviter sur les cartes en pochette : le reflet cache le numéro. |
 
-### Installer sur le téléphone
-- **Android (Chrome)** : menu ⋮ → *Ajouter à l'écran d'accueil* / *Installer l'application*.
-- **iPhone (Safari)** : bouton Partager → *Sur l'écran d'accueil*.
+Sur la fiche d'une carte :
+- **Prix demandé par le vendeur** : tape son prix, l'appli répond *bonne affaire* (30 % ou plus sous Cardmarket), *prix correct* ou *trop cher*.
+- **Ce n'est pas la bonne carte ?** : ouvre la recherche pour corriger.
+- **Dernières ventes et annonces** : liens vers les ventes réussies eBay, Cardmarket, Vinted et Leboncoin, pré-remplis avec la carte.
 
-L'appli s'ouvre alors en plein écran comme une vraie appli. Ouvre-la une fois chez toi avec du Wi-Fi : la lecture des numéros se télécharge (environ 10 Mo) et reste ensuite sur le téléphone.
+### Conseils de scan
+- Remplis bien le cadre avec la carte, bien à plat.
+- Coupe la lampe et incline légèrement la carte si un reflet passe sur le bas.
+- Si rien ne se passe après quelques secondes, utilise le gros bouton jaune ou la loupe.
 
-## Utilisation en braderie
+## Activer l'IA (recommandé)
 
-- **Scan auto** (pastille « Auto » verte) : remplis le cadre avec la carte. Sans clé IA, l'appli lit le numéro et valide dès qu'elle l'a lu deux fois. Avec une clé IA, elle envoie une image dès que la carte reste immobile une seconde, puis attend la carte suivante.
-- **Évite la lampe** : sur une carte en pochette, son reflet cache souvent le numéro. Incline légèrement la carte plutôt.
-- **Gros bouton jaune** : scan immédiat. Avec une clé IA, c'est le plus fiable.
-- **Loupe** : recherche par nom et/ou numéro (ex. `4/102`) si le scan échoue.
-- **Prix demandé** : tape le prix du vendeur, l'appli te dit *bonne affaire / correct / trop cher* par rapport à Cardmarket.
-- **Lot** : ajoute plusieurs cartes pour voir la valeur totale d'un classeur ou d'un lot.
-- **Lampe** : apparaît si ton téléphone la gère (Android surtout).
+La lecture gratuite marche bien sur certaines cartes (ex. Célébi 3/102), mais rate souvent les numéros en italique sur fond holographique des cartes récentes. L'IA (Claude Haiku) reconnaît presque toutes les cartes.
+
+1. Va sur https://console.anthropic.com, crée un compte et ajoute du crédit (5 € minimum).
+2. Dans *API Keys*, crée une clé (elle commence par `sk-ant-`).
+3. Dans l'appli : curseurs → colle la clé → *Enregistrer*. L'appli la vérifie.
+
+Coût : environ 1 centime pour 100 scans. La clé reste sur ton téléphone et n'est envoyée qu'à Anthropic. Par sécurité, fixe une limite de dépense mensuelle dans la console.
 
 ## Comment ça marche
 
 | Étape | Méthode |
 |---|---|
-| Lecture | Tesseract.js lit le numéro imprimé en bas (`4/102`) directement sur le téléphone. Gratuit, sans réseau. |
-| Identification | Le total (`/102`) désigne l'extension, le premier nombre la carte. Si plusieurs extensions ont le même total, l'appli lit le nom en haut de la carte, sinon elle te montre les candidates. |
-| IA (option) | Avec une clé API Anthropic (Réglages), le gros bouton envoie la photo à Claude Haiku, qui renvoie nom + numéro. Moins d'un centime pour 10 scans. |
-| Prix | API TCGdex (gratuite, sans clé) : Cardmarket en € (mis à jour chaque jour), TCGplayer en $, prix par version (1re édition…). |
-| Ventes | Boutons vers les ventes réussies eBay, Cardmarket, Vinted, Leboncoin, pré-remplis avec la carte. |
+| Lecture gratuite | Tesseract.js lit le numéro imprimé en bas (`133/128`) directement sur le téléphone, en pleine résolution, avec plusieurs découpages (bande entière, coin gauche, coin droit, négatif). |
+| Lecture IA | La photo de la carte (1000 px) part à Claude Haiku, qui renvoie nom, numéro et extension. |
+| Identification | Le total (`/128`) désigne l'extension, le premier nombre la carte. Si plusieurs extensions ont le même total, l'appli départage avec le nom, sinon elle te montre les candidates en image. Les extensions du jeu mobile TCG Pocket sont ignorées. |
+| Prix | API TCGdex (gratuite, sans clé) : Cardmarket en € (mis à jour chaque jour), TCGplayer en $, prix par version (1re édition, reverse…). |
 | Hors ligne | Un service worker garde l'appli et les cartes déjà vues ; le lot et la clé restent sur le téléphone. |
 
 ## Limites connues
 
-- **La lecture locale (gratuite) est peu fiable** sur les numéros en italique sur fond holographique (cartes récentes, full art) : sur de vraies photos de téléphone, Tesseract ne lit le numéro que sur une image sur cinq environ. Le vote sur plusieurs images compense en partie. Pour un scan fiable, ajoute une clé IA (environ 1 centime pour 100 scans).
-- **Prix** : c'est la tendance Cardmarket du produit, toutes langues confondues. Une carte FR se vend souvent un peu moins cher. Vérifie sur Cardmarket pour une grosse carte.
+- **Lecture gratuite** : sur de vraies vidéos de téléphone, elle ne lit le numéro des cartes récentes que sur environ une image sur cinq. Le vote sur plusieurs images compense en partie ; l'IA règle le problème.
+- **Prix** : tendance Cardmarket du produit, toutes langues confondues. Une carte FR se vend souvent un peu moins cher : vérifie sur Cardmarket pour une grosse carte.
 - **Ventes individuelles** : aucune API gratuite ne les fournit, d'où les liens vers les sites.
-- **Clé API** : elle reste stockée sur ton téléphone et n'est envoyée qu'à Anthropic. Partager l'adresse de l'appli ne partage pas ta clé. Fixe une limite de dépense sur console.anthropic.com par sécurité.
+- **Promos** sans numéro du type `xx/yyy` (ex. `SVP 050`) : passe par la loupe ou l'IA.
 
-## Mettre à jour l'appli
+## Développement
 
-Modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v2`) pour que les téléphones récupèrent la nouvelle version, puis `git push`. Vercel redéploie en moins d'une minute.
+Site statique, sans build : `index.html`, `app.js`, `sw.js`.
 
-## Fichiers
+```bash
+python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
+```
+
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v5`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+
+### Fichiers
 
 - `index.html` : interface (styles inclus)
-- `app.js` : caméra, lecture, recherche, fiche prix, lot, réglages
+- `app.js` : caméra, lecture, IA, recherche, fiche prix, lot, réglages
 - `sw.js` : fonctionnement hors ligne
 - `manifest.webmanifest` + `icons/` : installation sur l'écran d'accueil
 - `vercel.json` : en-têtes (autorisation caméra, pas de cache sur le service worker)
+
+### Héberger ailleurs
+
+Il faut du HTTPS pour la caméra. Autres options gratuites : glisser le dossier sur https://app.netlify.com/drop, ou GitHub Pages (*Settings → Pages → Branch : main / root*).
