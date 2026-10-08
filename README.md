@@ -59,8 +59,9 @@ Quand la carte est immobile, l'appli essaie dans cet ordre :
 | 1. Image | L'image de la carte est réduite à une empreinte de 12×16 pixels en couleur (moyennes exactes par bloc, même résultat sur iPhone et Android), comparée aux empreintes de 18 604 cartes françaises (TCGdex ; image anglaise quand la française manque). Reflets ignorés, plusieurs cadrages essayés. La carte est acceptée si elle est nettement plus proche que toutes les autres, et retrouvée sur deux images (ou une seule si l'écart est très net). Environ 20 ms par image. |
 | 2. Rééditions | Si la même illustration existe dans plusieurs extensions, l'appli lit le numéro pour choisir, sinon elle te montre les versions en image. |
 | 3. IA (option) | Avec une clé API Anthropic, si l'image ne suffit pas après ~1 s, la photo part à Claude Haiku, qui renvoie nom, numéro et extension. Une seule fois par carte. |
-| 4. Numéro | Sinon, Tesseract.js lit le numéro imprimé en bas (`133/128`) ; il est validé dès qu'il est lu deux fois en 8 secondes. Le total (`/128`) désigne l'extension. |
+| 4. Numéro | Sinon, Tesseract.js lit le numéro imprimé en bas (`133/128`) ; il est validé dès qu'il est lu deux fois en 8 secondes. Le total (`/128`) désigne l'extension ; s'il y a deux numéros (ex. `045/128 ★23/30` des cartes 30ᵉ anniversaire), c'est le principal qui compte. Le numéro est lu sur le cadre et, à tour de rôle, sur la carte repérée. |
 | 5. Vérification | Le numéro lu est **contrôlé par l'image** : les cartes portant ce numéro sont classées parmi les 18 604 selon leurs contours (plus robustes aux reflets de toploader que les couleurs). Une carte qui ne ressemble pas à l'image est refusée : un numéro mal lu (`111/10`, `100/107` au lieu de `100/101`) ne donne plus de fausse carte ni de faux « absente de la base ». |
+| 6. Nom (plan B) | Si le numéro lu ne colle pas (un chiffre manqué : `41/146` au lieu de `141/146`, fréquent sur les full art en boîtier), l'appli lit le nom en haut de la carte et cherche, dans les extensions de ce total, la carte de ce nom au numéro voisin ; l'image départage (version normale ou full art), sinon elle te propose les 2-3 versions. |
 | Prix | API TCGdex (gratuite, sans clé) : Cardmarket en € (mis à jour chaque jour), TCGplayer en $, prix par version (1re édition, reverse…). |
 | Hors ligne | Un service worker garde l'appli, la base d'images et les cartes déjà vues ; le lot et la clé restent sur le téléphone. |
 
@@ -94,7 +95,7 @@ Site statique, sans build : `index.html`, `app.js`, `match.js`, `locate.js`, `sw
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v11`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v12`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
 **Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` (avec le numéro de version de l'algorithme, `algo` : l'appli ignore une base calculée avec un ancien algorithme) + `index/cards-<version>.bin` (288 octets par carte). En local :
 

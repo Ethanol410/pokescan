@@ -48,7 +48,7 @@
     const hEdge = (y, x0, x1) => Math.max(rowSum(y, x0, x1), y > 1 ? rowSum(y - 1, x0, x1) : 0, y < H - 2 ? rowSum(y + 1, x0, x1) : 0);
 
     const fw = rect.w / k; // largeur du cadre en pixels de travail
-    const minW = Math.max(20, fw * (opts.minScale || 0.45)), maxW = Math.min(W - 2, fw * 1.15);
+    const minW = Math.max(20, fw * (opts.minScale || 0.45)), maxW = Math.min(W - 2, fw * (opts.maxScale || 1.15));
     let best = null;
     for (let w = minW; w <= maxW; w += 1.5) {
       for (const ar of [RATIO * 0.96, RATIO, RATIO * 1.04]) {

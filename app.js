@@ -113,11 +113,14 @@ async function findByNumber(n, total) {
 // Lit « 4/102 », « 006/165 », « 199/198 »… et ne garde qu'un total qui existe vraiment.
 function parseNumber(text, counts) {
   const clean = text.replace(/[Oo]/g, "0").replace(/[|Il]/g, "1").replace(/\\/g, "/");
+  let best = null;
   for (const m of clean.matchAll(/(\d{1,3})\s*\/\s*(\d{2,3})/g)) {
     const n = parseInt(m[1], 10), t = parseInt(m[2], 10);
-    if (n > 0 && (!counts || counts.has(t)) && n <= t + 150) return { n, t };
+    // Plusieurs numéros sur la carte (ex. « 045/128 ★23/30 » des cartes 30ᵉ anniversaire) :
+    // le numéro principal est celui de la plus grande extension.
+    if (n > 0 && (!counts || counts.has(t)) && n <= t + 150 && (!best || t > best.t)) best = { n, t };
   }
-  return null;
+  return best;
 }
 
 function norm(s) {
@@ -158,6 +161,16 @@ function frameRectInVideo() {
   const s = Math.max(vr.width / vw, vr.height / vh);
   const ox = (vw * s - vr.width) / 2, oy = (vh * s - vr.height) / 2;
   return { x: (fr.left - vr.left + ox) / s, y: (fr.top - vr.top + oy) / s, w: fr.width / s, h: fr.height / s };
+}
+
+// Rectangle de la carte : la carte repérée dans l'image si elle est nettement plus petite que le
+// cadre (tenue de loin), sinon le cadre. Le numéro est lu en bas de ce rectangle.
+function cardRectInVideo() {
+  const fr = frameRectInVideo();
+  const loc = locateCard(video, fr);
+  if (!loc || loc.w > fr.w * 0.9 || loc.w < fr.w * 0.45) return fr; // même rectangle : un seul instantané
+  const m = loc.w * 0.02, x = Math.max(0, loc.x - m), y = Math.max(0, loc.y - m);
+  return { x, y, w: Math.min(video.videoWidth - x, loc.w + 2 * m), h: Math.min(video.videoHeight - y, loc.h + 2 * m) };
 }
 
 // Instantané de la carte en pleine résolution (jusqu'à 1600 px de large) : le numéro est minuscule,
@@ -297,10 +310,10 @@ async function identifyWithAI(snap) {
   } finally { frame.classList.remove("scanning"); }
 }
 
-async function readName(snap) {
+async function readName(snap, top = 0.015, height = 0.11) {
   try {
     const w = await getNameWorker();
-    const { data } = await w.recognize(strip(snap, 0.015, 0.11, 1.5));
+    const { data } = await w.recognize(strip(snap, top, height, 1.5));
     return data.text;
   } catch { return ""; }
 }
@@ -312,6 +325,58 @@ async function readName(snap) {
 const DECIDE = { minGap: 0.15 }; // reconnaissance par l'image seule : 0 erreur sur 132 images réelles
 const VERIFY_MAX_RANK = 1000; // calibré sur 68 images iPhone : bonne carte ≤ 1000 dans 2/3 des images, carte au hasard ~5 %
 
+// Cartes d'une extension (liste légère : id, numéro, nom, image), mises en cache.
+const setCardsCache = new Map();
+function setCards(id) {
+  if (!setCardsCache.has(id)) setCardsCache.set(id, api(`/sets/${encodeURIComponent(id)}`).then((s) => s?.cards || []).catch(() => { setCardsCache.delete(id); return []; }));
+  return setCardsCache.get(id);
+}
+function digitDistance(a, b) { // distance d'édition entre deux numéros (« 41 » / « 141 » = 1)
+  a = String(parseInt(a, 10)); b = String(parseInt(b, 10));
+  if (a === "NaN" || b === "NaN") return 9;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+
+// Rangs de vérification par l'image (carte repérée + cadre + 2 cadrages serrés : calibré).
+function imageRanks(ids, snap, photo) {
+  const views = video.videoWidth && !photo ? frameViews(video, frameRectInVideo())
+    : frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height });
+  const pick = [views[0], ...views[1].slice(0, views.nloc), ...views[1].slice(-2)];
+  return new Map(matcher.M.verify(pick, ids).map((r) => [r.id, r.rank]));
+}
+
+// Plan B quand le numéro lu ne colle pas (chiffre manqué : « 41/146 » pour « 141/146 ») : on lit
+// le nom en haut de la carte et on cherche, dans les extensions de ce total, la carte de ce nom
+// au numéro le plus proche. L'image départage (carte normale ou full art, par exemple).
+async function identifyByName(num, snap, manual) {
+  const sets = (state.sets || []).filter((s) => s.cardCount?.official === num.t);
+  if (!sets.length || !snap) return null;
+  hint("Numéro douteux, lecture du nom…", true);
+  const all = (await Promise.all(sets.map((s) => setCards(s.id).then((cs) => cs.map((c) => ({ ...c, setId: s.id })))))).flat()
+    .filter((c) => norm(c.name).length >= 4 && digitDistance(c.localId, num.n) <= 1);
+  if (!all.length) return null;
+  let cands = [];
+  // le haut de la carte, puis une bande plus haute si la carte est plus bas dans le cadre
+  for (const [top, h] of [[0.015, 0.11], [0, 0.3]]) {
+    const lines = (await readName(snap, top, h)).split("\n").map((l) => l.trim()).filter((l) => norm(l).length >= 4);
+    cands = all.filter((c) => lines.some((l) => similarity(l, c.name) >= 0.75));
+    if (cands.length) break;
+  }
+  if (!cands.length || cands.length > 6) return null;
+  if (matcher.ready) {
+    const ranks = imageRanks(cands.map((c) => c.id), snap, manual?.photo);
+    const ok = cands.filter((c) => ranks.get(c.id) != null && ranks.get(c.id) <= 5000).sort((x, y) => ranks.get(x.id) - ranks.get(y.id));
+    if (ok.length) cands = ok.length === 1 || ranks.get(ok[1].id) > 3 * ranks.get(ok[0].id) ? [ok[0]] : ok;
+    else if (!manual) return null; // l'image ne ressemble à aucune : on n'insiste pas en scan auto
+  }
+  if (cands.length > 3) return null; // trop vague
+  return cands;
+}
+
 // `manual` : gros bouton ou photo (on annonce clairement un échec) ; sinon scan auto (on continue en silence).
 async function identify(num, snap, manual = false) {
   frame.classList.add("scanning");
@@ -320,32 +385,29 @@ async function identify(num, snap, manual = false) {
   let cards;
   try { cards = await findByNumber(num.n, num.t); }
   catch (e) { hint(esc(e.message)); return; }
-  if (!cards.length) {
-    // Souvent un numéro mal lu : en scan auto on continue à chercher, sans fausse alerte.
-    if (manual) showNotFound(`Aucune carte ${num.n}/${num.t} dans la base`);
-    else hint(IDLE_HINT());
-    return;
-  }
 
   // L'image confirme (ou non) le numéro lu, et choisit entre les cartes qui portent ce numéro.
-  if (matcher.ready) {
+  if (cards.length && matcher.ready) {
     hint(`Vérification de la carte <span class="num">${num.n}/${num.t}</span> sur l'image…`, true);
-    const views = video.videoWidth && !manual?.photo ? frameViews(video, frameRectInVideo())
-      : frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height });
-    // Cadrage normal + carte un peu plus petite (toploader) + un peu plus grande : 4 vues maximum.
-    const pick = [views[0], ...views[1].slice(0, views.nloc), ...views[1].slice(-2)]; // carte repérée + cadre + 2 cadrages serrés (calibré)
-    const ranks = new Map(matcher.M.verify(pick, cards.map((c) => c.id)).map((r) => [r.id, r.rank]));
-    const indexed = cards.filter((c) => ranks.get(c.id) != null);
-    const good = indexed.filter((c) => ranks.get(c.id) <= VERIFY_MAX_RANK).sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
-    const unknown = cards.filter((c) => ranks.get(c.id) == null);
-    if (!good.length && !unknown.length) {
-      // Le numéro lu ne correspond pas à ce qu'on voit : probablement mal lu.
-      if (manual) showNotFound("Carte non reconnue");
-      else hint(IDLE_HINT());
+    const ranks = imageRanks(cards.map((c) => c.id), snap, manual?.photo);
+    const good = cards.filter((c) => ranks.get(c.id) != null && ranks.get(c.id) <= VERIFY_MAX_RANK).sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
+    const unknown = cards.filter((c) => ranks.get(c.id) == null); // sans image dans la base : invérifiables
+    if (good.length) cards = (good.length === 1 || ranks.get(good[1].id) > 4 * ranks.get(good[0].id)) && (!unknown.length || !manual) ? [good[0]] : [...good, ...(manual ? unknown : [])];
+    else cards = manual ? unknown : []; // en scan auto, on ne propose pas de cartes invérifiables
+  }
+
+  if (!cards.length) {
+    // Numéro absent ou qui ne correspond pas à l'image : souvent un chiffre mal lu. Plan B : le nom.
+    const byName = await identifyByName(num, snap, manual);
+    if (byName?.length) {
+      if (byName.length === 1) presentCard(await api(`/cards/${encodeURIComponent(byName[0].id)}`));
+      else showPicker(byName, `${num.n}/${num.t}`);
+      hint(IDLE_HINT());
       return;
     }
-    if (good.length && (good.length === 1 || ranks.get(good[1].id) > 4 * ranks.get(good[0].id)) && !unknown.length) cards = [good[0]];
-    else cards = [...good, ...unknown];
+    if (manual) showNotFound(`Carte ${num.n}/${num.t} non reconnue`);
+    else hint(IDLE_HINT());
+    return;
   }
 
   if (cards.length > 1 && snap) {
@@ -393,7 +455,12 @@ async function scanOnce(manual) {
   state.busy = true;
   frame.classList.add("reading");
   try {
-    const snap = snapshot(video, frameRectInVideo());
+    // Deux instantanés : le cadre, et la carte repérée si elle est nettement plus petite (tenue de
+    // loin). Le scan auto les alterne ; le gros bouton essaie les deux.
+    const fr = frameRectInVideo(), cr = cardRectInVideo();
+    const frameSnap = snapshot(video, fr);
+    const cardSnap = cr === fr ? null : snapshot(video, cr);
+    let snap = frameSnap;
     // Gros bouton : l'image d'abord, puis l'IA (si clé), puis la lecture du numéro.
     if (manual && matcher.ready) {
       // Depuis la vidéo (et non l'instantané) pour pouvoir essayer aussi des cadrages plus larges.
@@ -404,8 +471,10 @@ async function scanOnce(manual) {
       try { if (await identifyWithAI(snap)) return; }
       catch (e) { toast(e.message); }
     }
-    state.cycle = (state.cycle + 1) % 2;
-    const num = await readNumber(snap, manual ? null : state.cycle ? [0, 1] : [0, 2, 3]);
+    state.cycle = (state.cycle + 1) % 4;
+    if (!manual && cardSnap && state.cycle >= 2) snap = cardSnap;
+    let num = await readNumber(snap, manual ? null : state.cycle % 2 ? [0, 1] : [0, 2, 3]);
+    if (!num && manual && cardSnap) { snap = cardSnap; num = await readNumber(snap); }
     const now = Date.now();
     if (!num) {
       if (manual) showNotFound();
@@ -918,7 +987,8 @@ function pickButton(c, onPick) {
 function showPicker(cards, label) {
   $("pick-title").textContent = `Quelle carte ${label} ?`;
   const box = $("picks"); box.innerHTML = "";
-  cards.forEach((c) => box.append(pickButton(c, () => showCard(c))));
+  // les cartes « légères » (liste d'une extension) n'ont pas encore leurs prix : on les charge au choix
+  cards.forEach((c) => box.append(pickButton(c, async () => showCard(c.set ? c : await api(`/cards/${encodeURIComponent(c.id)}`)))));
   openSheet("sheet-pick");
 }
 
