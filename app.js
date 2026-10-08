@@ -31,7 +31,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const img = (base, q = "low") => base ? `${base}/${q}.webp` : "";
 const buzz = (p) => { try { navigator.vibrate?.(p); } catch {} };
 
-function hint(html) { hintEl.innerHTML = html; }
+// Message sous le cadre ; busy = petite roue qui tourne devant (une recherche est en cours).
+function hint(html, busy = false) { hintEl.innerHTML = html; hintEl.classList.toggle("busy", busy); }
+const IDLE_HINT = () => load("apikey", "") ? "Mode IA : tiens la carte immobile une seconde dans le cadre" : "Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro";
 let toastTimer;
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("on");
@@ -252,16 +254,20 @@ async function cardsFromAI(ai) {
 }
 
 async function identifyWithAI(snap) {
-  hint("Analyse par l'IA…");
+  frame.classList.add("scanning");
+  try {
+  hint("Analyse de la carte par l'IA…", true);
   const ai = await aiIdentify(snap);
+  if (ai?.name) hint(`Recherche de <span class="num">${esc(ai.name)}${ai.number ? " " + esc(ai.number) + (ai.total ? "/" + esc(ai.total) : "") : ""}</span>…`, true);
   const cards = await cardsFromAI(ai);
-  if (!cards.length) return false;
+  if (!cards.length) { hint(IDLE_HINT()); return false; }
   buzz(40);
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
   if (cards.length === 1) showCard(cards[0].pricing ? cards[0] : await api(`/cards/${encodeURIComponent(cards[0].id)}`));
   else showPicker(cards, ai.name || "");
-  hint("Mode IA : tiens la carte immobile une seconde dans le cadre");
+  hint(IDLE_HINT());
   return true;
+  } finally { frame.classList.remove("scanning"); }
 }
 
 async function readName(snap) {
@@ -274,14 +280,16 @@ async function readName(snap) {
 
 /* ---------- Identification ---------- */
 async function identify(num, snap) {
-  hint(`Recherche de <span class="num">${num.n}/${num.t}</span>…`);
+  frame.classList.add("scanning");
+  try {
+  hint(`Recherche de la carte <span class="num">${num.n}/${num.t}</span>…`, true);
   let cards;
   try { cards = await findByNumber(num.n, num.t); }
   catch (e) { hint(esc(e.message)); return; }
   if (!cards.length) { hint(`<span class="num">${num.n}/${num.t}</span> introuvable, réessaie ou cherche à la main`); return; }
 
   if (cards.length > 1 && snap) {
-    hint("Plusieurs extensions possibles, lecture du nom…");
+    hint("Plusieurs extensions possibles, lecture du nom…", true);
     const text = await readName(snap);
     const lines = text.split("\n").filter((l) => l.trim().length > 2);
     const scored = cards.map((c) => ({ c, s: Math.max(0, ...lines.map((l) => similarity(l, c.name))) }))
@@ -292,7 +300,8 @@ async function identify(num, snap) {
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
   if (cards.length === 1) showCard(cards[0]);
   else showPicker(cards, `${num.n}/${num.t}`);
-  hint("Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro");
+  hint(IDLE_HINT());
+  } finally { frame.classList.remove("scanning"); }
 }
 
 /* ---------- Caméra ---------- */
@@ -351,7 +360,7 @@ async function scanOnce(manual) {
     state.reads = state.reads.filter((r) => now - r.t < 8000);
     state.reads.push({ key, num, t: now });
     if (state.reads.filter((r) => r.key === key).length >= 2) { state.reads = []; await identify(num, snap); }
-    else hint(`Lu <span class="num">${key}</span>, ne bouge plus…`);
+    else hint(`Numéro lu : <span class="num">${key}</span>, vérification… ne bouge plus`, true);
   } catch (e) {
     console.warn(e);
     if (manual) hint("Erreur de lecture : " + esc(e.message));
@@ -676,7 +685,7 @@ $("shutter").addEventListener("click", async () => {
   buzz(15);
   btn.classList.add("busy"); btn.setAttribute("aria-busy", "true");
   frame.classList.add("scanning");
-  hint("Scan en cours…");
+  hint(load("apikey", "") ? "Photo prise, envoi à l'IA…" : "Lecture du numéro…", true);
   try {
     // Si le scan auto est en train de lire, on attend qu'il ait fini plutôt que d'ignorer l'appui.
     for (let i = 0; (state.busy || aiScan.busy) && i < 60; i++) await new Promise((r) => setTimeout(r, 50));
