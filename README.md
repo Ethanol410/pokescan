@@ -26,7 +26,8 @@ L'appli s'ouvre alors en plein écran comme une vraie appli. Ouvre-la une fois c
 
 ## Utilisation en braderie
 
-- **Scan auto** (pastille « Auto » verte) : tiens la carte dans le cadre, le numéro du bas dans la zone pointillée. La fiche s'ouvre toute seule.
+- **Scan auto** (pastille « Auto » verte) : remplis le cadre avec la carte. Sans clé IA, l'appli lit le numéro et valide dès qu'elle l'a lu deux fois. Avec une clé IA, elle envoie une image dès que la carte reste immobile une seconde, puis attend la carte suivante.
+- **Évite la lampe** : sur une carte en pochette, son reflet cache souvent le numéro. Incline légèrement la carte plutôt.
 - **Gros bouton jaune** : scan immédiat. Avec une clé IA, c'est le plus fiable.
 - **Loupe** : recherche par nom et/ou numéro (ex. `4/102`) si le scan échoue.
 - **Prix demandé** : tape le prix du vendeur, l'appli te dit *bonne affaire / correct / trop cher* par rapport à Cardmarket.
@@ -46,7 +47,7 @@ L'appli s'ouvre alors en plein écran comme une vraie appli. Ouvre-la une fois c
 
 ## Limites connues
 
-- **La lecture locale rate environ une carte sur deux** sur les numéros minuscules ou stylisés (cartes full art, anciennes cartes avec le numéro à droite). Rapproche la carte, évite les reflets, ou utilise l'IA / la loupe. 
+- **La lecture locale (gratuite) est peu fiable** sur les numéros en italique sur fond holographique (cartes récentes, full art) : sur de vraies photos de téléphone, Tesseract ne lit le numéro que sur une image sur cinq environ. Le vote sur plusieurs images compense en partie. Pour un scan fiable, ajoute une clé IA (environ 1 centime pour 100 scans).
 - **Prix** : c'est la tendance Cardmarket du produit, toutes langues confondues. Une carte FR se vend souvent un peu moins cher. Vérifie sur Cardmarket pour une grosse carte.
 - **Ventes individuelles** : aucune API gratuite ne les fournit, d'où les liens vers les sites.
 - **Clé API** : elle reste stockée sur ton téléphone et n'est envoyée qu'à Anthropic. Partager l'adresse de l'appli ne partage pas ta clé. Fixe une limite de dépense sur console.anthropic.com par sécurité.

@@ -15,7 +15,7 @@ const video = $("video"), frame = $("frame"), hintEl = $("hint");
 const state = {
   stream: null, track: null, torch: false,
   auto: load("auto", true),
-  busy: false, lastRead: null, pausedUntil: 0,
+  busy: false, reads: [], lastHit: Date.now(), pausedUntil: 0, cycle: 0,
   numWorker: null, nameWorker: null,
   sets: null, counts: null,
   current: null,
@@ -66,7 +66,10 @@ async function getSets() {
     throw e;
   }
 }
+// Les extensions du jeu mobile TCG Pocket (A1, A2a, B1, P-A…) ne sont pas des cartes physiques.
+const isPocket = (id) => /^[AB]\d|^P-[A-Z]$/.test(String(id));
 function useSets(v) {
+  v = v.filter((s) => !isPocket(s.id));
   state.sets = v;
   state.counts = new Set(v.map((s) => s.cardCount?.official).filter(Boolean));
   return v;
@@ -103,26 +106,17 @@ function similarity(a, b) {
   return (2 * inter) / (a.length - 1 + b.length - 1 || 1);
 }
 
-// Deux lecteurs : l'un limité aux chiffres, l'autre libre. Ils ne ratent pas les mêmes cartes.
+// Lecteur limité aux chiffres et à « / », en mode « bloc de texte » : le réglage qui a le mieux
+// lu les numéros sur de vraies photos de cartes.
 async function getNumWorker() {
   if (!state.numWorker) {
     state.numWorker = (async () => {
       const w = await Tesseract.createWorker("eng");
-      await w.setParameters({ tessedit_char_whitelist: "0123456789/", tessedit_pageseg_mode: "11" });
+      await w.setParameters({ tessedit_char_whitelist: "0123456789/", tessedit_pageseg_mode: "6" });
       return w;
     })();
   }
   return state.numWorker;
-}
-async function getTextWorker() {
-  if (!state.textWorker) {
-    state.textWorker = (async () => {
-      const w = await Tesseract.createWorker("eng");
-      await w.setParameters({ tessedit_pageseg_mode: "11" });
-      return w;
-    })();
-  }
-  return state.textWorker;
 }
 async function getNameWorker() {
   if (!state.nameWorker) state.nameWorker = Tesseract.createWorker("fra").then(async (w) => { await w.setParameters({ tessedit_pageseg_mode: "6" }); return w; });
@@ -138,26 +132,28 @@ function frameRectInVideo() {
   return { x: (fr.left - vr.left + ox) / s, y: (fr.top - vr.top + oy) / s, w: fr.width / s, h: fr.height / s };
 }
 
-// Instantané de la carte, redressé à 900 px de large.
-function snapshot(source, rect) {
+// Instantané de la carte en pleine résolution (jusqu'à 1600 px de large) : le numéro est minuscule,
+// chaque pixel compte.
+function snapshot(source, rect, maxW = 1600) {
   const c = document.createElement("canvas");
-  c.width = 900; c.height = Math.round(900 * rect.h / rect.w);
+  const w = Math.max(600, Math.min(maxW, Math.round(rect.w)));
+  c.width = w; c.height = Math.round(w * rect.h / rect.w);
   c.getContext("2d").drawImage(source, rect.x, rect.y, rect.w, rect.h, 0, 0, c.width, c.height);
   return c;
 }
 
-// Zone de l'instantané (fractions), agrandie, en niveaux de gris contrastés.
-function strip(snap, top, height, width = 1400, invert = false, left = 0, w = 1) {
+// Zone de l'instantané (fractions), agrandie (scale), en niveaux de gris.
+function strip(snap, top, height, scale = 2, invert = false, left = 0, w = 1) {
   const sx = snap.width * left, sw = snap.width * w;
   const sy = snap.height * top, sh = snap.height * height;
   const c = document.createElement("canvas");
+  const width = Math.min(2000, Math.round(sw * scale));
   c.width = width; c.height = Math.round(sh * width / sw);
   const ctx = c.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(snap, sx, sy, sw, sh, 0, 0, c.width, c.height);
   const d = ctx.getImageData(0, 0, c.width, c.height), p = d.data;
   for (let i = 0; i < p.length; i += 4) {
     let g = 0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2];
-    g = Math.max(0, Math.min(255, (g - 128) * 1.7 + 128));
     if (invert) g = 255 - g;
     p[i] = p[i + 1] = p[i + 2] = g;
   }
@@ -165,21 +161,22 @@ function strip(snap, top, height, width = 1400, invert = false, left = 0, w = 1)
   return c;
 }
 
-async function readNumber(snap) {
+// Plusieurs façons de lire le numéro ; aucune ne marche sur toutes les cartes.
+// `only` limite aux essais donnés (le scan auto en fait deux par image, à tour de rôle).
+async function readNumber(snap, only) {
   await getSets();
   const digits = await getNumWorker();
-  const text = await getTextWorker();
   const tries = [
-    // 1. Toute la bande du bas, chiffres seulement
-    () => digits.recognize(strip(snap, 0.86, 0.14)),
-    // 2. Chaque moitié zoomée (numéro à gauche sur les cartes récentes, à droite sur les anciennes)
-    () => text.recognize(strip(snap, 0.88, 0.12, 1400, false, 0, 0.5)),
-    () => text.recognize(strip(snap, 0.88, 0.12, 1400, false, 0.5, 0.5)),
-    // 3. Texte clair sur fond sombre (cartes full art)
-    () => digits.recognize(strip(snap, 0.86, 0.14, 1400, true)),
+    // Toute la bande du bas
+    () => digits.recognize(strip(snap, 0.84, 0.13, 2)),
+    // Moitié gauche (cartes récentes) et droite (anciennes cartes), zoomées
+    () => digits.recognize(strip(snap, 0.84, 0.13, 2, false, 0, 0.5)),
+    () => digits.recognize(strip(snap, 0.84, 0.13, 3, false, 0.5, 0.5)),
+    // En négatif, pour le texte clair sur fond sombre (cartes full art)
+    () => digits.recognize(strip(snap, 0.84, 0.13, 2, true)),
   ];
-  for (const t of tries) {
-    const r = parseNumber((await t()).data.text, state.counts);
+  for (const i of only || tries.keys()) {
+    const r = parseNumber((await tries[i]()).data.text, state.counts);
     if (r) return r;
   }
   return null;
@@ -194,7 +191,9 @@ Le numéro est imprimé en petit en bas de la carte (ex. « 006/165 »). Si ce n
 async function aiIdentify(snap) {
   const key = load("apikey", "");
   if (!key) return null;
-  const jpeg = snap.toDataURL("image/jpeg", 0.85).split(",")[1];
+  // Image réduite à 1000 px : assez pour l'IA, moins cher à envoyer.
+  const small = snapshot(snap, { x: 0, y: 0, w: snap.width, h: snap.height }, 1000);
+  const jpeg = small.toDataURL("image/jpeg", 0.85).split(",")[1];
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
@@ -217,6 +216,7 @@ async function aiIdentify(snap) {
       }),
     });
     if (r.status === 401) throw new Error("Clé API refusée : vérifie-la dans les réglages");
+    if (r.status === 400 || r.status === 402) throw new Error("IA : crédit épuisé ou compte à activer sur console.anthropic.com");
     if (!r.ok) throw new Error("L'IA a répondu " + r.status);
     const data = await r.json();
     const txt = data.content?.map((b) => b.text || "").join("") || "";
@@ -248,7 +248,7 @@ async function cardsFromAI(ai) {
   if (!ai.name) return [];
   const p = new URLSearchParams({ name: ai.name, "pagination:itemsPerPage": "40", "pagination:page": "1" });
   if (n) p.set("localId", `eq:${n}|${String(n).padStart(2, "0")}|${String(n).padStart(3, "0")}`);
-  return (await api("/cards?" + p)) || [];
+  return ((await api("/cards?" + p)) || []).filter((c) => !isPocket(c.id.split("-")[0]));
 }
 
 async function identifyWithAI(snap) {
@@ -260,14 +260,14 @@ async function identifyWithAI(snap) {
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
   if (cards.length === 1) showCard(cards[0].pricing ? cards[0] : await api(`/cards/${encodeURIComponent(cards[0].id)}`));
   else showPicker(cards, ai.name || "");
-  hint("Place la carte dans le cadre, numéro en bas bien net");
+  hint("Mode IA : tiens la carte immobile une seconde dans le cadre");
   return true;
 }
 
 async function readName(snap) {
   try {
     const w = await getNameWorker();
-    const { data } = await w.recognize(strip(snap, 0.015, 0.11, 1200));
+    const { data } = await w.recognize(strip(snap, 0.015, 0.11, 1.5));
     return data.text;
   } catch { return ""; }
 }
@@ -292,7 +292,7 @@ async function identify(num, snap) {
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
   if (cards.length === 1) showCard(cards[0]);
   else showPicker(cards, `${num.n}/${num.t}`);
-  hint("Place la carte dans le cadre, numéro en bas bien net");
+  hint("Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro");
 }
 
 /* ---------- Caméra ---------- */
@@ -302,7 +302,8 @@ async function startCamera() {
   try {
     const s = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      // On demande la 4K : le téléphone donne la meilleure résolution qu'il sait faire.
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
     });
     state.stream = s; state.track = s.getVideoTracks()[0];
     video.srcObject = s;
@@ -312,7 +313,6 @@ async function startCamera() {
     if (caps.focusMode?.includes("continuous")) state.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
     getSets().catch(() => {});
     getNumWorker().catch(() => {});
-    getTextWorker().catch(() => {});
   } catch (e) {
     cameraError(e.name === "NotAllowedError"
       ? "L'accès à la caméra a été refusé. Autorise-le dans les réglages du navigateur, ou prends la carte en photo."
@@ -332,18 +332,26 @@ async function scanOnce(manual) {
       try { if (await identifyWithAI(snap)) return; }
       catch (e) { toast(e.message); }
     }
-    const num = await readNumber(snap);
+    state.cycle = (state.cycle + 1) % 2;
+    const num = await readNumber(snap, manual ? null : state.cycle ? [0, 1] : [0, 2, 3]);
+    const now = Date.now();
     if (!num) {
-      state.lastRead = null;
       if (manual) hint(load("apikey", "")
         ? "Carte non reconnue : rapproche-la, évite les reflets, ou cherche à la main"
-        : "Numéro illisible : rapproche la carte, évite les reflets, ou cherche à la main");
+        : "Numéro illisible : rapproche la carte, coupe la lampe, incline-la pour enlever le reflet");
+      else if (now - state.lastHit > 6000 && state.reads.length === 0)
+        hint("Numéro pas encore lu : rapproche la carte, coupe la lampe, incline-la contre les reflets");
       return;
     }
+    state.lastHit = now;
+    if (manual) { state.reads = []; await identify(num, snap); return; }
+    // En mode auto, on vote : le premier numéro lu deux fois en 8 secondes l'emporte,
+    // même si des lectures ratées ou fausses s'intercalent.
     const key = num.n + "/" + num.t;
-    // En mode auto, on exige deux lectures identiques de suite pour éviter les erreurs.
-    if (manual || state.lastRead === key) { state.lastRead = null; await identify(num, snap); }
-    else { state.lastRead = key; hint(`Lu <span class="num">${key}</span>, ne bouge plus…`); }
+    state.reads = state.reads.filter((r) => now - r.t < 8000);
+    state.reads.push({ key, num, t: now });
+    if (state.reads.filter((r) => r.key === key).length >= 2) { state.reads = []; await identify(num, snap); }
+    else hint(`Lu <span class="num">${key}</span>, ne bouge plus…`);
   } catch (e) {
     console.warn(e);
     if (manual) hint("Erreur de lecture : " + esc(e.message));
@@ -353,10 +361,52 @@ async function scanOnce(manual) {
   }
 }
 
+/* Scan auto avec l'IA : on attend que la carte soit immobile ~0,7 s, on envoie UNE image,
+   puis on attend que la scène change (nouvelle carte) avant d'en renvoyer une. */
+const aiScan = { prev: null, stableSince: 0, armed: true, lastSent: null, broken: false, busy: false };
+function thumb() {
+  const c = aiScan.canvas || (aiScan.canvas = document.createElement("canvas"));
+  c.width = 24; c.height = 34;
+  const r = frameRectInVideo();
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, 24, 34);
+  const d = ctx.getImageData(0, 0, 24, 34).data, g = new Float32Array(24 * 34);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  return g;
+}
+const meanDiff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
+const spread = (a) => { const m = a.reduce((s, v) => s + v, 0) / a.length; return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length); };
+
+async function aiAutoStep() {
+  if (aiScan.busy) return;
+  const t = thumb(), now = Date.now();
+  const moving = aiScan.prev ? meanDiff(t, aiScan.prev) > 7 : true;
+  aiScan.prev = t;
+  if (aiScan.lastSent && meanDiff(t, aiScan.lastSent) > 22) aiScan.armed = true; // nouvelle carte ou cadre vidé
+  if (moving) { aiScan.stableSince = 0; return; }
+  aiScan.stableSince ||= now;
+  if (!aiScan.armed || now - aiScan.stableSince < 700 || spread(t) < 20) return;
+  aiScan.armed = false; aiScan.lastSent = t; aiScan.busy = true;
+  frame.classList.add("reading");
+  try {
+    const snap = snapshot(video, frameRectInVideo());
+    if (!(await identifyWithAI(snap))) hint("Pas de carte reconnue. Bouge un peu la carte pour réessayer.");
+  } catch (e) {
+    toast(e.message);
+    if (/Clé API|401|crédit/i.test(e.message)) { aiScan.broken = true; hint("IA indisponible : lecture locale du numéro."); }
+  } finally {
+    frame.classList.remove("reading");
+    aiScan.busy = false;
+  }
+}
+
 async function autoLoop() {
   const canRun = state.auto && !anySheetOpen() && !document.hidden && video.videoWidth && Date.now() > state.pausedUntil;
-  if (canRun) await scanOnce(false);
-  setTimeout(autoLoop, canRun ? 150 : 500);
+  if (canRun) {
+    if (load("apikey", "") && !aiScan.broken) await aiAutoStep();
+    else await scanOnce(false);
+  }
+  setTimeout(autoLoop, canRun ? 200 : 500);
 }
 
 async function scanPhoto(file) {
@@ -389,7 +439,8 @@ function closeSheets() {
   sheets.forEach((s) => $(s).classList.remove("open"));
   $("backdrop").classList.remove("on");
   state.pausedUntil = Date.now() + 1200; // laisse le temps de retirer la carte
-  state.lastRead = null;
+  state.reads = [];
+  state.lastHit = Date.now();
 }
 $("backdrop").addEventListener("click", closeSheets);
 document.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeSheets(); });
@@ -569,7 +620,7 @@ $("search-form").addEventListener("submit", async (e) => {
       const p = new URLSearchParams({ "pagination:itemsPerPage": "60", "pagination:page": "1" });
       if (name) p.set("name", name);
       if (/^\d{1,3}$/.test(rawNum)) { const n = String(parseInt(rawNum, 10)); p.set("localId", `eq:${n}|${n.padStart(2, "0")}|${n.padStart(3, "0")}`); }
-      cards = (await api("/cards?" + p)) || [];
+      cards = ((await api("/cards?" + p)) || []).filter((c) => !isPocket(c.id.split("-")[0]));
     }
     if (!cards.length) { status.textContent = "Aucune carte trouvée. Vérifie l'orthographe (nom français)."; status.classList.add("err"); return; }
     status.textContent = `${cards.length} résultat${cards.length > 1 ? "s" : ""}${cards.length >= 60 ? " (affine avec le numéro)" : ""}`;
@@ -631,6 +682,8 @@ $("photo").addEventListener("change", (e) => scanPhoto(e.target.files[0]));
 /* ---------- Réglages : clé API ---------- */
 function refreshKeyUI() {
   const has = !!load("apikey", "");
+  if (typeof aiScan !== "undefined") { aiScan.broken = false; aiScan.armed = true; }
+  hint(has ? "Mode IA : tiens la carte immobile une seconde dans le cadre" : "Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro");
   $("open-settings").classList.toggle("ai", has);
   $("key-status").textContent = has ? "IA activée : le gros bouton utilise Claude." : "Aucune clé : lecture locale gratuite uniquement.";
   $("key-status").classList.remove("err");

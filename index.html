@@ -46,8 +46,8 @@ h1,h2,h3{font-family:var(--display);margin:0;line-height:1.1;text-wrap:balance}
 #stage{position:fixed;inset:0;overflow:hidden;background:#000}
 #video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 #shade{position:absolute;inset:0;pointer-events:none}
-#frame{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);
-  width:min(74vw,calc(62vh * 63 / 88));aspect-ratio:63/88;border-radius:4.5%/3.2%;
+#frame{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);
+  width:min(88vw,calc(64vh * 63 / 88));aspect-ratio:63/88;border-radius:4.5%/3.2%;
   box-shadow:0 0 0 200vmax rgba(10,8,16,.62);pointer-events:none}
 #frame::before,#frame::after{content:"";position:absolute;inset:-3px;border-radius:inherit;border:3px solid transparent}
 #frame .corner{position:absolute;width:26px;height:26px;border:4px solid var(--text)}
@@ -55,7 +55,7 @@ h1,h2,h3{font-family:var(--display);margin:0;line-height:1.1;text-wrap:balance}
 #frame .tr{top:-4px;right:-4px;border-left:0;border-bottom:0;border-radius:0 10px 0 0}
 #frame .bl{bottom:-4px;left:-4px;border-right:0;border-top:0;border-radius:0 0 0 10px}
 #frame .br{bottom:-4px;right:-4px;border-left:0;border-top:0;border-radius:0 0 10px 0}
-#frame .numzone{position:absolute;left:3%;right:3%;bottom:1.5%;height:10%;border:2px dashed rgba(255,207,58,.85);border-radius:6px}
+#frame .numzone{position:absolute;left:3%;right:3%;bottom:1%;height:8.5%;border:2px dashed rgba(255,207,58,.85);border-radius:6px}
 #frame.hit .corner{border-color:var(--good)}
 #frame.reading .numzone{animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{50%{border-color:rgba(255,207,58,.25)}}
@@ -70,7 +70,7 @@ h1,h2,h3{font-family:var(--display);margin:0;line-height:1.1;text-wrap:balance}
 .iconbtn[aria-pressed="true"]{background:var(--sticker);color:var(--sticker-ink)}
 .topbar .group{display:flex;gap:8px}
 
-#hint{position:fixed;left:16px;right:16px;top:calc(46% + min(51.7vw, 31vh) + 16px);text-align:center;z-index:4;
+#hint{position:fixed;left:16px;right:16px;top:calc(44% + min(61.5vw, 32vh) + 14px);text-align:center;z-index:4;
   font-weight:700;text-shadow:0 1px 6px rgba(0,0,0,.8);min-height:1.5em}
 #hint .num{color:var(--sticker)}
 
@@ -216,7 +216,7 @@ td:first-child{color:var(--dim)}
   </div>
 </header>
 
-<div id="hint" role="status" aria-live="polite">Place la carte dans le cadre, numéro en bas bien net</div>
+<div id="hint" role="status" aria-live="polite">Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro</div>
 
 <nav class="bottombar">
   <button class="pill" id="auto" aria-pressed="true"><span class="dot"></span>Auto</button>
