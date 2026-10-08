@@ -13,7 +13,18 @@ const page = await browser.newPage();
 await page.goto("https://api.tcgdex.net/v2/fr/sets");
 await page.addScriptTag({ path: new URL("../match.js", import.meta.url).pathname });
 
-const res = await page.evaluate(async () => {
+// Empreintes déjà calculées (index précédent) : on ne retélécharge que les nouvelles cartes.
+const dir = new URL("../index/", import.meta.url).pathname;
+let previous = {};
+try {
+  const meta = JSON.parse(await fs.readFile(dir + "cards.json", "utf8"));
+  const buf = await fs.readFile(dir + meta.file);
+  meta.ids.forEach((id, k) => { previous[id] = buf.subarray(k * 288, (k + 1) * 288).toString("base64"); });
+  console.log(`Index précédent : ${meta.ids.length} cartes réutilisables`);
+} catch { console.log("Pas d'index précédent : construction complète"); }
+
+page.on("console", (m) => console.log("  " + m.text()));
+const res = await page.evaluate(async (previous) => {
   const pocket = (id) => /^[AB]\d|^P-[A-Z]$/.test(id.split("-")[0]); // jeu mobile TCG Pocket
   const fr = await (await fetch("https://api.tcgdex.net/v2/fr/cards")).json();
   const en = await (await fetch("https://api.tcgdex.net/v2/en/cards")).json();
@@ -23,23 +34,41 @@ const res = await page.evaluate(async () => {
     .map((c) => ({ id: c.id, name: c.name, image: c.image || enImage.get(c.id) }))
     .filter((c) => c.image);
   const out = new Array(list.length);
-  let next = 0, fails = 0;
+  const errors = {};
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let next = 0, done = 0, fails = 0, reused = 0;
+  async function get(url) {
+    const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 20000);
+    try { return await fetch(url, { signal: ctrl.signal }); } finally { clearTimeout(t); }
+  }
   async function worker() {
     while (next < list.length) {
       const k = next++, c = list[k];
-      for (let attempt = 0; attempt < 3; attempt++) {
+      if (previous[c.id]) { out[k] = Uint8Array.from(atob(previous[c.id]), (ch) => ch.charCodeAt(0)); reused++; done++; continue; }
+      for (let attempt = 0; attempt < 6; attempt++) {
         try {
-          const r = await fetch(c.image + "/low.webp");
-          if (!r.ok) throw new Error(r.status);
+          const r = await get(c.image + "/low.webp");
+          if (!r.ok) {
+            errors[r.status] = (errors[r.status] || 0) + 1;
+            if (r.status === 404) break; // image absente : inutile de réessayer
+            const wait = Number(r.headers.get("retry-after")) * 1000 || 1000 * 2 ** attempt;
+            await sleep(wait); continue;
+          }
           const bmp = await createImageBitmap(await r.blob());
           out[k] = CardMatch.pack(CardMatch.describe(bmp, { x: 0, y: 0, w: bmp.width, h: bmp.height }));
           bmp.close();
           break;
-        } catch { if (attempt === 2) fails++; else await new Promise((r) => setTimeout(r, 500)); }
+        } catch (e) {
+          errors[e.name || "erreur"] = (errors[e.name || "erreur"] || 0) + 1;
+          await sleep(1000 * 2 ** attempt);
+        }
       }
+      if (!out[k]) fails++;
+      if (++done % 1000 === 0) console.log(`${done} / ${list.length} (${fails} échecs, ${reused} réutilisées)`);
     }
   }
-  await Promise.all(Array.from({ length: 16 }, worker));
+  await Promise.all(Array.from({ length: 6 }, worker));
+  console.log("Erreurs rencontrées : " + JSON.stringify(errors));
   const ids = [], names = [], parts = [];
   list.forEach((c, k) => { if (out[k]) { ids.push(c.id); names.push(c.name); parts.push(out[k]); } });
   const buf = new Uint8Array(parts.length * CardMatch.BYTES);
@@ -47,7 +76,7 @@ const res = await page.evaluate(async () => {
   let bin = "";
   for (let k = 0; k < buf.length; k += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(k, k + 0x8000));
   return { ids, names, fails, total: list.length, b64: btoa(bin) };
-});
+}, previous);
 await browser.close();
 
 console.log(`Empreintes : ${res.ids.length} / ${res.total} cartes (${res.fails} échecs)`);
@@ -57,7 +86,6 @@ if (res.ids.length < 10000) {
 }
 const buf = Buffer.from(res.b64, "base64");
 const version = crypto.createHash("sha1").update(buf).update(res.ids.join(",")).digest("hex").slice(0, 10);
-const dir = new URL("../index/", import.meta.url).pathname;
 await fs.mkdir(dir, { recursive: true });
 for (const f of await fs.readdir(dir)) if (/^cards-.*\.bin$/.test(f)) await fs.unlink(dir + f);
 await fs.writeFile(dir + `cards-${version}.bin`, buf);
