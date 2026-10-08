@@ -29,10 +29,34 @@ const eur = (v) => v == null || isNaN(v) ? "—" : Number(v).toLocaleString("fr-
 const usd = (v) => v == null || isNaN(v) ? "—" : Number(v).toLocaleString("fr-FR", { style: "currency", currency: "USD" });
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const img = (base, q = "low") => base ? `${base}/${q}.webp` : "";
-const buzz = (p) => { try { navigator.vibrate?.(p); } catch {} };
+// Retour haptique. Android : vibreur. iPhone (iOS 17.4+) : Safari n'a pas d'API de vibration,
+// mais basculer un interrupteur <input switch> produit un petit « tic » ; on en enchaîne plusieurs.
+const HAPTIC = { tap: [12], success: [30, 60, 30], error: [60, 50, 60, 50, 60] };
+let switchEl = null;
+function iosTick() {
+  try {
+    if (!switchEl) {
+      switchEl = document.createElement("label");
+      switchEl.setAttribute("aria-hidden", "true");
+      switchEl.style.cssText = "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;left:-10px;top:-10px";
+      const input = document.createElement("input");
+      input.type = "checkbox"; input.setAttribute("switch", ""); input.tabIndex = -1;
+      switchEl.append(input);
+      document.body.append(switchEl);
+    }
+    switchEl.click();
+  } catch {}
+}
+function haptic(kind = "tap") {
+  if (!load("haptics", true)) return;
+  const pattern = HAPTIC[kind] || HAPTIC.tap;
+  try { if (navigator.vibrate && navigator.vibrate(pattern)) return; } catch {}
+  const ticks = kind === "success" ? 2 : kind === "error" ? 3 : 1;
+  for (let i = 0; i < ticks; i++) setTimeout(iosTick, i * 110);
+}
 
 // Message sous le cadre ; busy = petite roue qui tourne devant (une recherche est en cours).
-function hint(html, busy = false) { hintEl.innerHTML = html; hintEl.classList.toggle("busy", busy); document.body.classList.toggle("hint-busy", busy); }
+function hint(html, busy = false) { hintEl.innerHTML = html; hintEl.classList.toggle("busy", busy); }
 const IDLE_HINT = () => (typeof matcher !== "undefined" && matcher.ready) || load("apikey", "")
   ? "Tiens la carte immobile dans le cadre, sans reflet"
   : "Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro";
@@ -262,9 +286,10 @@ async function identifyWithAI(snap) {
   const ai = await aiIdentify(snap);
   if (ai?.name) hint(`Recherche de <span class="num">${esc(ai.name)}${ai.number ? " " + esc(ai.number) + (ai.total ? "/" + esc(ai.total) : "") : ""}</span>…`, true);
   const cards = await cardsFromAI(ai);
-  if (!cards.length) { hint(IDLE_HINT()); return false; }
-  buzz(40);
-  frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
+  if (!cards.length) {
+    if (ai?.name) { showNotFound(`${ai.name}${ai.number ? " " + ai.number + (ai.total ? "/" + ai.total : "") : ""} n'est pas dans la base`); return true; }
+    hint(IDLE_HINT()); return false;
+  }
   if (cards.length === 1) presentCard(cards[0].pricing ? cards[0] : await api(`/cards/${encodeURIComponent(cards[0].id)}`));
   else showPicker(cards, ai.name || "");
   hint(IDLE_HINT());
@@ -288,7 +313,7 @@ async function identify(num, snap) {
   let cards;
   try { cards = await findByNumber(num.n, num.t); }
   catch (e) { hint(esc(e.message)); return; }
-  if (!cards.length) { hint(`<span class="num">${num.n}/${num.t}</span> introuvable, réessaie ou cherche à la main`); return; }
+  if (!cards.length) { showNotFound(`La carte ${num.n}/${num.t} n'est pas dans la base`); return; }
 
   if (cards.length > 1 && snap) {
     hint("Plusieurs extensions possibles, lecture du nom…", true);
@@ -298,8 +323,6 @@ async function identify(num, snap) {
       .sort((a, b) => b.s - a.s);
     if (scored[0].s >= 0.55 && scored[0].s - (scored[1]?.s ?? 0) >= 0.15) cards = [scored[0].c];
   }
-  buzz(40);
-  frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
   if (cards.length === 1) presentCard(cards[0]);
   else showPicker(cards, `${num.n}/${num.t}`);
   hint(IDLE_HINT());
@@ -340,7 +363,8 @@ async function scanOnce(manual) {
     const snap = snapshot(video, frameRectInVideo());
     // Gros bouton : l'image d'abord, puis l'IA (si clé), puis la lecture du numéro.
     if (manual && matcher.ready) {
-      const r = matcher.M.decide(...frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height }));
+      // Depuis la vidéo (et non l'instantané) pour pouvoir essayer aussi des cadrages plus larges.
+      const r = matcher.M.decide(...frameViews(video, frameRectInVideo()));
       if (r.ok && (await identifyFromMatch(r, snap))) return;
     }
     if (manual && load("apikey", "")) {
@@ -351,9 +375,7 @@ async function scanOnce(manual) {
     const num = await readNumber(snap, manual ? null : state.cycle ? [0, 1] : [0, 2, 3]);
     const now = Date.now();
     if (!num) {
-      if (manual) hint(load("apikey", "")
-        ? "Carte non reconnue : rapproche-la, évite les reflets, ou cherche à la main"
-        : "Numéro illisible : rapproche la carte, coupe la lampe, incline-la pour enlever le reflet");
+      if (manual) showNotFound();
       else if (now - state.lastHit > 6000 && state.reads.length === 0)
         hint("Numéro pas encore lu : rapproche la carte, coupe la lampe, incline-la contre les reflets");
       return;
@@ -426,7 +448,7 @@ async function identifyFromMatch(r, snap) {
     return true;
   } finally { frame.classList.remove("scanning"); }
 }
-function presentPick() { beep(); try { state.waitChange = thumb(); } catch {} }
+function presentPick() { beep(); haptic("success"); try { state.waitChange = thumb(); } catch {} }
 
 /* ---------- Scan automatique ----------
    À chaque image : on attend que la carte soit immobile, puis on essaie dans l'ordre
@@ -469,7 +491,7 @@ async function autoStep() {
   const moving = auto.prev ? meanDiff(t, auto.prev) > 7 : true;
   auto.prev = t;
   if (state.waitChange) {
-    if (meanDiff(t, state.waitChange) > 22) state.waitChange = null; // carte retirée ou changée
+    if (meanDiff(t, state.waitChange) > 22) { state.waitChange = null; hideResult(); } // carte retirée ou changée : on efface l'ancien résultat
     else { setReady(false); return; }
   }
   if (auto.aiLast && meanDiff(t, auto.aiLast) > 22) auto.aiArmed = true;
@@ -477,6 +499,8 @@ async function autoStep() {
   auto.stableSince ||= now;
   if (spread(t) < 20) { setReady(false); return; } // cadre vide ou uni
   setReady(true);
+  // Carte bien immobile depuis 5 s sans résultat : on le dit au lieu de chercher indéfiniment.
+  if (now - auto.stableSince > 5000 && !hintEl.classList.contains("busy") && !aiScan.busy) { showNotFound(); return; }
 
   // 1. Image
   if (matcher.ready) {
@@ -497,7 +521,7 @@ async function autoStep() {
     if (auto.aiArmed && now - auto.stableSince > (matcher.ready ? 1200 : 600)) {
       auto.aiArmed = false; auto.aiLast = t; aiScan.busy = true;
       try {
-        if (!(await identifyWithAI(snapshot(video, frameRectInVideo())))) hint("Pas de carte reconnue. Bouge un peu la carte pour réessayer.");
+        await identifyWithAI(snapshot(video, frameRectInVideo()));
       } catch (e) {
         toast(e.message);
         if (/Clé API|401|crédit/i.test(e.message)) { aiScan.broken = true; hint("IA indisponible : lecture locale."); }
@@ -533,7 +557,7 @@ async function scanPhoto(file) {
     }
     const num = await readNumber(snap);
     if (num) return identify(num, snap);
-    hint("Numéro illisible sur la photo. Cadre la carte au plus près, ou cherche à la main.");
+    showNotFound();
   } catch (e) { hint("Erreur : " + esc(e.message)); }
 }
 
@@ -561,9 +585,11 @@ let audioCtx = null;
 document.addEventListener("pointerdown", () => {
   try { audioCtx ||= new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch {}
 }, { capture: true });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) try { audioCtx?.resume(); } catch {} });
 function beep() {
   if (!load("sound", true) || !audioCtx) return;
   try {
+    audioCtx.resume(); // iPhone : l'audio se met en pause quand l'appli passe en arrière-plan
     const t = audioCtx.currentTime;
     [[880, 0], [1320, 0.09]].forEach(([f, d]) => {
       const o = audioCtx.createOscillator(), g = audioCtx.createGain();
@@ -578,7 +604,7 @@ function beep() {
 
 // Une carte vient d'être reconnue. En rafale : bande en bas et on continue ; sinon : fiche complète.
 function presentCard(c) {
-  beep(); buzz(40);
+  beep(); haptic("success");
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
   try { state.waitChange = video.videoWidth ? thumb() : null; } catch { state.waitChange = null; }
   if (load("rafale", true)) showResult(c);
@@ -603,11 +629,59 @@ function showResult(c) {
     state.lot.unshift({ id: c.id, name: c.name, num: `${c.localId}${official ? "/" + official : ""}`, set: c.set?.name || "", image: c.image, price, asked: null });
     save("lot", state.lot); renderLot();
     add.setAttribute("aria-pressed", "true"); add.textContent = "✓";
+    haptic("tap");
     toast(`${c.name} ajouté au lot`);
+    hideResult(true); // la carte « part dans le lot » : la place est libre pour la suivante
   });
+  revealResult(el, false);
+}
+
+function revealResult(el, error) {
+  clearTimeout(hideTimer);
+  el.classList.toggle("error", error);
+  el.classList.remove("leaving", "to-lot");
   el.hidden = false;
   el.style.animation = "none"; void el.offsetWidth; el.style.animation = "";
   document.body.classList.add("has-result");
+}
+let hideTimer;
+function hideResult(toLot = false) {
+  const el = $("result");
+  if (el.hidden || el.classList.contains("leaving")) return;
+  el.classList.add("leaving");
+  el.classList.toggle("to-lot", toLot);
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    el.hidden = true; el.classList.remove("leaving", "to-lot");
+    document.body.classList.remove("has-result");
+    if (!hintEl.classList.contains("busy")) hint(IDLE_HINT());
+  }, toLot ? 420 : 220);
+}
+
+// Carte introuvable : bande rouge, son grave, vibration « erreur », et bouton pour chercher à la main.
+function showNotFound(title = "Carte non reconnue") {
+  errorBeep(); haptic("error");
+  try { state.waitChange = video.videoWidth ? thumb() : null; } catch {} // pas de nouvelle alerte tant que la carte ne change pas
+  const el = $("result");
+  el.innerHTML = `<span class="nf-icon" aria-hidden="true">?</span>
+    <div class="who"><b></b><span>Peut-être absente de la base (promo, extension toute récente…). Réessaie avec le bouton jaune.</span></div>
+    <button class="search-btn" type="button">Chercher à la main</button>
+    <button class="add close-nf" type="button" aria-label="Fermer">✕</button>`;
+  el.querySelector("b").textContent = title;
+  el.querySelector(".search-btn").addEventListener("click", () => { hideResult(); $("search-results").innerHTML = ""; openSheet("sheet-search"); setTimeout(() => $("s-name").focus(), 300); });
+  el.querySelector(".close-nf").addEventListener("click", () => hideResult());
+  revealResult(el, true);
+  hint(IDLE_HINT());
+}
+function errorBeep() {
+  if (!load("sound", true) || !audioCtx) return;
+  try {
+    audioCtx.resume();
+    const t = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = "triangle"; o.frequency.setValueAtTime(330, t); o.frequency.linearRampToValueAtTime(220, t + 0.25);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + 0.32);
+  } catch {}
 }
 
 /* ---------- Fiche carte ---------- */
@@ -838,7 +912,8 @@ $("shutter").addEventListener("click", async () => {
   manualScanning = true;
   const btn = $("shutter"), flash = $("flash");
   flash.classList.remove("go"); void flash.offsetWidth; flash.classList.add("go");
-  buzz(15);
+  haptic("tap");
+  hideResult();
   btn.classList.add("busy"); btn.setAttribute("aria-busy", "true");
   frame.classList.add("scanning");
   hint(load("apikey", "") ? "Photo prise, envoi à l'IA…" : "Lecture du numéro…", true);
@@ -876,6 +951,8 @@ function refreshKeyUI() {
 }
 $("opt-rafale").checked = load("rafale", true);
 $("opt-sound").checked = load("sound", true);
+$("opt-haptics").checked = load("haptics", true);
+$("opt-haptics").addEventListener("change", (e) => { save("haptics", e.target.checked); if (e.target.checked) haptic("success"); });
 $("opt-rafale").addEventListener("change", (e) => save("rafale", e.target.checked));
 $("opt-sound").addEventListener("change", (e) => { save("sound", e.target.checked); if (e.target.checked) beep(); });
 $("open-settings").addEventListener("click", () => {

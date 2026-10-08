@@ -15,10 +15,12 @@ Web app pour téléphone : tu vises une carte Pokémon (française), elle la rec
 ## Utilisation
 
 1. Tiens la carte **immobile dans le cadre**, en le remplissant. Les coins passent au jaune quand l'appli analyse.
-2. Dès que la carte est reconnue : **bip**, coins verts, et une **bande** apparaît sous le cadre avec le nom, l'extension et le prix.
-3. Passe à la carte suivante : l'appli attend que la carte change avant de scanner à nouveau.
+2. Dès que la carte est reconnue : **bip**, **vibration**, coins verts, et une **bande** apparaît au-dessus du bouton jaune avec le nom, l'extension et le prix.
+3. Passe à la carte suivante : la bande s'efface dès que la carte change, et l'appli scanne la nouvelle.
 
-Sur la bande : touche-la pour ouvrir la **fiche complète**, ou touche **+** pour ajouter la carte au lot.
+Sur la bande : touche-la pour ouvrir la **fiche complète**, ou touche **+** pour ajouter la carte au lot (la bande « part » dans le lot).
+
+**Carte introuvable** : si une carte reste immobile 5 secondes sans être reconnue (ou si son numéro n'existe pas dans la base), une bande rouge l'indique, avec un son grave et une vibration « erreur », et un bouton *Chercher à la main*.
 
 ### Les boutons
 
@@ -36,7 +38,7 @@ Sur la fiche d'une carte :
 - **Ce n'est pas la bonne carte ?** : ouvre la recherche pour corriger.
 - **Dernières ventes et annonces** : liens vers les ventes réussies eBay, Cardmarket, Vinted et Leboncoin, pré-remplis avec la carte.
 
-Réglages utiles : **mode rafale** (bande en bas, activé par défaut ; désactivé, chaque carte ouvre sa fiche complète) et **bip** (l'iPhone ne laisse pas les sites vibrer, le son sert de confirmation).
+Réglages utiles : **mode rafale** (bande en bas, activé par défaut ; désactivé, chaque carte ouvre sa fiche complète), **bip** et **vibrations**. Sur Android, les vibrations passent par le vibreur. Sur iPhone, Safari n'a pas d'API de vibration : l'appli utilise le petit « tic » des interrupteurs iOS (iOS 17.4 ou plus récent), garanti après un toucher, à vérifier pour le scan automatique.
 
 ### Conseils de scan
 - Remplis bien le cadre avec la carte, bien droite.
@@ -85,7 +87,7 @@ Site statique, sans build : `index.html`, `app.js`, `match.js`, `sw.js`.
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v8`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v9`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
 **Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` + `index/cards-<version>.bin` (288 octets par carte). En local :
 
