@@ -1,6 +1,6 @@
 /* Service worker PokéScan : l'appli s'ouvre même sans réseau,
    et les cartes déjà consultées restent disponibles hors ligne. */
-const VERSION = "pokescan-v1";
+const VERSION = "pokescan-v2";
 const SHELL = ["./", "index.html", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {

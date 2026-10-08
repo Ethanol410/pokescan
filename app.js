@@ -532,7 +532,7 @@ async function showCardById(id) {
 function pickButton(c, onPick) {
   const b = document.createElement("button");
   b.className = "pick"; b.type = "button";
-  const im = document.createElement("img"); im.loading = "lazy"; im.alt = ""; im.src = img(c.image);
+  const im = document.createElement("img"); im.alt = ""; im.src = img(c.image);
   const n = document.createElement("b"); n.textContent = c.name;
   const s = document.createElement("span"); s.textContent = [c.set?.name, c.localId].filter(Boolean).join(" · ");
   b.append(im, n, s);

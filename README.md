@@ -2,9 +2,11 @@
 
 Web app à installer sur ton téléphone : tu vises une carte Pokémon, elle affiche son prix Cardmarket, l'évolution sur 30 jours, et te dit si le prix du vendeur est une bonne affaire. Pensée pour les braderies.
 
-## Mettre l'appli en ligne (5 minutes, gratuit)
+**Appli en ligne : https://pokescan-gamma.vercel.app** (déployée sur Vercel depuis ce dépôt : chaque `git push` sur `main` la met à jour automatiquement).
 
-La caméra ne fonctionne qu'en **HTTPS**, il faut donc héberger le dossier. Deux options :
+## Héberger ailleurs
+
+La caméra ne fonctionne qu'en **HTTPS**. Autres options gratuites :
 
 ### Option A — Netlify Drop (le plus simple)
 1. Va sur https://app.netlify.com/drop (crée un compte gratuit si demandé).
@@ -44,10 +46,14 @@ L'appli s'ouvre alors en plein écran comme une vraie appli. Ouvre-la une fois c
 
 ## Limites connues
 
-- **La lecture locale rate environ une carte sur deux** sur les numéros minuscules ou stylisés (cartes full art, anciennes cartes avec le numéro à droite). Rapproche la carte, évite les reflets, ou utilise l'IA / la loupe. Après une modification de l'appli, augmente `VERSION` dans `sw.js` pour forcer la mise à jour sur le téléphone.
+- **La lecture locale rate environ une carte sur deux** sur les numéros minuscules ou stylisés (cartes full art, anciennes cartes avec le numéro à droite). Rapproche la carte, évite les reflets, ou utilise l'IA / la loupe. 
 - **Prix** : c'est la tendance Cardmarket du produit, toutes langues confondues. Une carte FR se vend souvent un peu moins cher. Vérifie sur Cardmarket pour une grosse carte.
 - **Ventes individuelles** : aucune API gratuite ne les fournit, d'où les liens vers les sites.
 - **Clé API** : elle reste stockée sur ton téléphone et n'est envoyée qu'à Anthropic. Partager l'adresse de l'appli ne partage pas ta clé. Fixe une limite de dépense sur console.anthropic.com par sécurité.
+
+## Mettre à jour l'appli
+
+Modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v2`) pour que les téléphones récupèrent la nouvelle version, puis `git push`. Vercel redéploie en moins d'une minute.
 
 ## Fichiers
 
@@ -55,3 +61,4 @@ L'appli s'ouvre alors en plein écran comme une vraie appli. Ouvre-la une fois c
 - `app.js` : caméra, lecture, recherche, fiche prix, lot, réglages
 - `sw.js` : fonctionnement hors ligne
 - `manifest.webmanifest` + `icons/` : installation sur l'écran d'accueil
+- `vercel.json` : en-têtes (autorisation caméra, pas de cache sur le service worker)
