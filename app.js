@@ -664,9 +664,30 @@ $("lot-clear").addEventListener("click", () => {
 });
 
 /* ---------- Boutons ---------- */
-$("shutter").addEventListener("click", () => {
+// Gros bouton : flash dans le cadre, ligne de scan qui balaie la carte, anneau qui tourne
+// autour du bouton tant que l'analyse dure.
+let manualScanning = false;
+$("shutter").addEventListener("click", async () => {
   if (!$("camerror").hidden) return $("photo").click();
-  scanOnce(true);
+  if (manualScanning) return;
+  manualScanning = true;
+  const btn = $("shutter"), flash = $("flash");
+  flash.classList.remove("go"); void flash.offsetWidth; flash.classList.add("go");
+  buzz(15);
+  btn.classList.add("busy"); btn.setAttribute("aria-busy", "true");
+  frame.classList.add("scanning");
+  hint("Scan en cours…");
+  try {
+    // Si le scan auto est en train de lire, on attend qu'il ait fini plutôt que d'ignorer l'appui.
+    for (let i = 0; (state.busy || aiScan.busy) && i < 60; i++) await new Promise((r) => setTimeout(r, 50));
+    state.pausedUntil = Date.now() + 60000; // le scan auto se met en pause pendant le scan manuel
+    await scanOnce(true);
+  } finally {
+    state.pausedUntil = Date.now() + 800;
+    btn.classList.remove("busy"); btn.removeAttribute("aria-busy");
+    frame.classList.remove("scanning");
+    manualScanning = false;
+  }
 });
 function setAuto(on) { state.auto = on; save("auto", on); $("auto").setAttribute("aria-pressed", on); }
 $("auto").addEventListener("click", () => { setAuto(!state.auto); toast(state.auto ? "Scan automatique activé" : "Scan automatique coupé : utilise le gros bouton"); });

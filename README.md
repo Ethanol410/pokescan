@@ -17,7 +17,7 @@ Web app pour téléphone : tu vises une carte Pokémon (française), elle affich
 | Bouton | Ce qu'il fait |
 |---|---|
 | **Pastille « Auto »** (verte = activée) | Scan automatique en continu. Sans clé IA : l'appli lit le numéro en bas de la carte et valide dès qu'elle l'a lu deux fois en 8 secondes. Avec une clé IA : dès que la carte reste immobile une seconde, une image part à l'IA, la fiche s'ouvre, puis l'appli attend la carte suivante. |
-| **Gros bouton jaune** | Scan immédiat de ce qui est dans le cadre, sans attendre. Avec une clé IA, il utilise l'IA. Sans clé, il essaie toutes les méthodes de lecture sur l'image et valide dès la première lecture (pas de vote). Si la caméra est indisponible, il ouvre l'appareil photo. Utile quand le mode auto est coupé ou n'arrive pas à valider. |
+| **Gros bouton jaune « Scanner »** | Scan immédiat de ce qui est dans le cadre, sans attendre. Au toucher : flash, ligne de scan qui balaie la carte et anneau qui tourne autour du bouton jusqu'au résultat ; le scan auto se met en pause pendant ce temps. Avec une clé IA, il utilise l'IA. Sans clé, il essaie toutes les méthodes de lecture sur l'image et valide dès la première lecture (pas de vote). Si la caméra est indisponible, il ouvre l'appareil photo. Utile quand le mode auto est coupé ou n'arrive pas à valider. |
 | **Lot · n** | Les cartes ajoutées avec « Ajouter au lot » : valeur totale Cardmarket face au total demandé par le vendeur. Pratique pour un classeur ou un lot. |
 | **Loupe** | Recherche à la main par nom et/ou numéro (ex. `4/102`). |
 | **Curseurs** | Réglages : clé IA (l'icône devient jaune quand elle est active). |
@@ -68,7 +68,7 @@ Site statique, sans build : `index.html`, `app.js`, `sw.js`.
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v5`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v6`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
 ### Fichiers
 
