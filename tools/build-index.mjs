@@ -9,6 +9,18 @@ import crypto from "node:crypto";
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
+// Le serveur d'images renvoie parfois un en-tête CORS en double (« *, * ») que Chromium refuse :
+// les images sont donc téléchargées par Node, puis transmises à la page avec un en-tête propre.
+await page.route("https://assets.tcgdex.net/**", async (route) => {
+  try {
+    const r = await fetch(route.request().url(), { signal: AbortSignal.timeout(20000) });
+    await route.fulfill({
+      status: r.status,
+      headers: { "content-type": r.headers.get("content-type") || "image/webp", "access-control-allow-origin": "*", ...(r.headers.get("retry-after") ? { "retry-after": r.headers.get("retry-after") } : {}) },
+      body: Buffer.from(await r.arrayBuffer()),
+    });
+  } catch { await route.abort("failed"); }
+});
 // On se place sur le domaine de l'API pour que les requêtes vers TCGdex soient autorisées.
 await page.goto("https://api.tcgdex.net/v2/fr/sets");
 await page.addScriptTag({ path: new URL("../match.js", import.meta.url).pathname });
@@ -23,7 +35,7 @@ try {
   console.log(`Index précédent : ${meta.ids.length} cartes réutilisables`);
 } catch { console.log("Pas d'index précédent : construction complète"); }
 
-page.on("console", (m) => console.log("  " + m.text()));
+page.on("console", (m) => { if (m.type() === "log") console.log("  " + m.text()); });
 const res = await page.evaluate(async (previous) => {
   const pocket = (id) => /^[AB]\d|^P-[A-Z]$/.test(id.split("-")[0]); // jeu mobile TCG Pocket
   const fr = await (await fetch("https://api.tcgdex.net/v2/fr/cards")).json();
