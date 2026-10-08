@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PokéScan</title>
+<meta name="theme-color" content="#14121a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PokéScan">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Appli caméra plein écran : viseur au centre, barre d'actions en bas, fiche prix en tiroir qui monte du bas.
+   Thème sombre unique, voulu : on scanne sous des barnums et dans des salles mal éclairées. */
+:root{
+  --night:#14121a;      /* fond appli */
+  --panel:#1f1c28;      /* tiroirs */
+  --raised:#2a2635;     /* champs, boutons secondaires */
+  --line:#3a3547;
+  --text:#f2eff8;
+  --dim:#a39fb3;
+  --sticker:#ffcf3a;    /* étiquette de prix de brocante */
+  --sticker-ink:#231a00;
+  --good:#46d38a; --ok:#ffcf3a; --bad:#ff6b57;
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --body:"Atkinson Hyperlegible",ui-sans-serif,system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--night);color:var(--text);font:16px/1.45 var(--body);overflow:hidden}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--sticker);outline-offset:2px}
+h1,h2,h3{font-family:var(--display);margin:0;line-height:1.1;text-wrap:balance}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.label{font-size:.72rem;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);font-weight:700}
+[hidden]{display:none!important}
+
+/* ---------- Caméra ---------- */
+#stage{position:fixed;inset:0;overflow:hidden;background:#000}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#shade{position:absolute;inset:0;pointer-events:none}
+#frame{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);
+  width:min(74vw,calc(62vh * 63 / 88));aspect-ratio:63/88;border-radius:4.5%/3.2%;
+  box-shadow:0 0 0 200vmax rgba(10,8,16,.62);pointer-events:none}
+#frame::before,#frame::after{content:"";position:absolute;inset:-3px;border-radius:inherit;border:3px solid transparent}
+#frame .corner{position:absolute;width:26px;height:26px;border:4px solid var(--text)}
+#frame .tl{top:-4px;left:-4px;border-right:0;border-bottom:0;border-radius:10px 0 0 0}
+#frame .tr{top:-4px;right:-4px;border-left:0;border-bottom:0;border-radius:0 10px 0 0}
+#frame .bl{bottom:-4px;left:-4px;border-right:0;border-top:0;border-radius:0 0 0 10px}
+#frame .br{bottom:-4px;right:-4px;border-left:0;border-top:0;border-radius:0 0 10px 0}
+#frame .numzone{position:absolute;left:3%;right:3%;bottom:1.5%;height:10%;border:2px dashed rgba(255,207,58,.85);border-radius:6px}
+#frame.hit .corner{border-color:var(--good)}
+#frame.reading .numzone{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{border-color:rgba(255,207,58,.25)}}
+@media (prefers-reduced-motion:reduce){#frame.reading .numzone{animation:none}}
+
+.topbar{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;gap:8px;
+  padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;z-index:5}
+.brand{font:800 1.3rem var(--display);letter-spacing:-.02em}
+.brand span{color:var(--sticker)}
+.iconbtn{width:44px;height:44px;border-radius:50%;border:0;background:rgba(31,28,40,.78);display:grid;place-items:center;backdrop-filter:blur(8px)}
+.iconbtn svg{width:22px;height:22px}
+.iconbtn[aria-pressed="true"]{background:var(--sticker);color:var(--sticker-ink)}
+.topbar .group{display:flex;gap:8px}
+
+#hint{position:fixed;left:16px;right:16px;top:calc(46% + min(51.7vw, 31vh) + 16px);text-align:center;z-index:4;
+  font-weight:700;text-shadow:0 1px 6px rgba(0,0,0,.8);min-height:1.5em}
+#hint .num{color:var(--sticker)}
+
+.bottombar{position:fixed;left:0;right:0;bottom:0;z-index:5;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;
+  padding:14px 16px calc(18px + env(safe-area-inset-bottom,0px));background:linear-gradient(to top,rgba(20,18,26,.92),rgba(20,18,26,0))}
+.shutter{width:76px;height:76px;border-radius:50%;border:5px solid var(--text);background:var(--sticker);box-shadow:0 0 0 4px rgba(0,0,0,.35)}
+.shutter:active{transform:scale(.94)}
+.pill{justify-self:start;border:0;border-radius:999px;padding:10px 14px;background:rgba(31,28,40,.85);display:flex;align-items:center;gap:8px;font-weight:700;font-size:.9rem;backdrop-filter:blur(8px)}
+.pill.right{justify-self:end}
+.pill .dot{width:10px;height:10px;border-radius:50%;background:var(--dim)}
+.pill[aria-pressed="true"] .dot{background:var(--good);box-shadow:0 0 0 3px rgba(70,211,138,.25)}
+
+#camerror{position:fixed;inset:0;display:grid;place-items:center;padding:24px 16px;z-index:3;text-align:center}
+#camerror > div{max-width:340px;display:flex;flex-direction:column;gap:14px;align-items:center}
+#camerror p{margin:0;color:var(--dim)}
+
+/* ---------- Tiroirs ---------- */
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:10;max-height:92%;overflow-y:auto;overscroll-behavior:contain;
+  background:var(--panel);border-radius:22px 22px 0 0;box-shadow:0 -12px 40px rgba(0,0,0,.5);
+  padding:10px 16px calc(24px + env(safe-area-inset-bottom,0px));transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1)}
+.sheet.open{transform:none}
+@media (prefers-reduced-motion:reduce){.sheet{transition:none}}
+.grab{width:44px;height:5px;border-radius:3px;background:var(--line);margin:0 auto 12px}
+.sheet-inner{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.sheet-head h2{font-size:1.25rem;min-width:0}
+.close{flex:0 0 auto}
+#backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9;opacity:0;pointer-events:none;transition:opacity .2s}
+#backdrop.on{opacity:1;pointer-events:auto}
+
+/* Fiche carte */
+.card-top{display:grid;grid-template-columns:112px 1fr;gap:14px;align-items:start}
+.card-top img{width:100%;border-radius:6px;background:var(--raised);aspect-ratio:63/88;object-fit:cover}
+.card-top .meta{min-width:0;display:flex;flex-direction:column;gap:8px}
+.card-top h2{font-size:1.45rem;font-weight:800}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.78rem;padding:3px 9px;border-radius:999px;background:var(--raised);color:var(--dim)}
+
+/* L'étiquette de prix, façon sticker de brocante */
+.tag{align-self:flex-start;position:relative;background:var(--sticker);color:var(--sticker-ink);padding:8px 14px 8px 26px;border-radius:6px 10px 10px 6px;
+  clip-path:polygon(14px 0,100% 0,100% 100%,14px 100%,0 50%);display:flex;flex-direction:column;line-height:1}
+.tag::before{content:"";position:absolute;left:9px;top:50%;width:7px;height:7px;margin-top:-3.5px;border-radius:50%;background:var(--panel)}
+.tag b{font:800 2rem/1 var(--display);letter-spacing:-.02em}
+.tag small{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+.updated{font-size:.78rem;color:var(--dim)}
+
+.verdict{display:flex;flex-direction:column;gap:8px;background:var(--raised);border-radius:14px;padding:12px}
+.verdict .row{display:flex;gap:10px;align-items:center}
+.verdict input{flex:1;min-width:0;background:var(--night);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:700 1.1rem var(--mono)}
+.verdict .out{font-weight:700}
+.verdict .out.good{color:var(--good)} .verdict .out.ok{color:var(--ok)} .verdict .out.bad{color:var(--bad)}
+
+.trend{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:end;height:118px}
+.trend .bar{height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px;font-size:.75rem;color:var(--dim)}
+.trend .fill{width:100%;max-width:60px;border-radius:6px 6px 2px 2px;background:#4a4459}
+.trend .bar:last-child .fill{background:var(--sticker)}
+.trend .v{color:var(--text);font-size:.8rem}
+.delta{font-family:var(--mono);font-weight:700;font-size:.85rem}
+.delta.up{color:var(--good)} .delta.down{color:var(--bad)}
+.sect{display:flex;flex-direction:column;gap:8px}
+.sect-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.93rem}
+th,td{padding:8px 4px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left;white-space:normal}
+thead th{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:700}
+td:first-child{color:var(--dim)}
+
+.links{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;text-align:center;text-decoration:none;border:1px solid var(--line);background:var(--raised);
+  border-radius:12px;padding:12px 10px;font-weight:700;font-size:.92rem;color:var(--text);min-height:48px}
+.btn.primary{background:var(--sticker);border-color:var(--sticker);color:var(--sticker-ink)}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* Choix entre plusieurs cartes */
+.picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:10px}
+.pick{border:1px solid var(--line);background:var(--raised);border-radius:12px;padding:6px;display:flex;flex-direction:column;gap:5px;text-align:left;font-size:.78rem;line-height:1.25}
+.pick img{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:5px;background:var(--night)}
+.pick b{font-size:.82rem}
+.pick span{color:var(--dim)}
+
+/* Recherche manuelle */
+.fields{display:grid;grid-template-columns:1fr 110px;gap:10px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field input{background:var(--night);border:1px solid var(--line);border-radius:10px;padding:12px;width:100%}
+.status{color:var(--dim);font-size:.92rem;min-height:1.3em}
+.status.err{color:var(--bad)}
+
+/* Lot */
+.lot-sum{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lot-sum > div{background:var(--raised);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.lot-sum b{font:800 1.4rem var(--display)}
+.lot-list{display:flex;flex-direction:column}
+.lot-item{display:grid;grid-template-columns:40px 1fr auto auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.lot-item img{width:40px;border-radius:3px;aspect-ratio:63/88;object-fit:cover;background:var(--raised)}
+.lot-item .who{min-width:0}
+.lot-item .who b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lot-item .who span{font-size:.78rem;color:var(--dim)}
+.lot-item .rm{border:0;background:none;color:var(--dim);width:36px;height:36px;border-radius:50%}
+.empty{color:var(--dim);margin:0}
+.note{color:var(--dim);font-size:.9rem;margin:0;max-width:62ch}
+.linkbtn{background:none;border:0;color:var(--dim);text-decoration:underline;text-underline-offset:3px;font-size:.9rem;padding:4px;align-self:center}
+#open-settings.ai{color:var(--sticker)}
+
+#toast{position:fixed;left:50%;top:calc(66px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:20;background:var(--text);color:var(--night);
+  padding:10px 16px;border-radius:999px;font-weight:700;font-size:.9rem;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px);text-align:center}
+#toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="frame" aria-hidden="true">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class="numzone"></div>
+  </div>
+</div>
+
+<div id="camerror" hidden>
+  <div>
+    <h2>Caméra indisponible</h2>
+    <p id="camerror-msg">Autorise l'accès à la caméra dans les réglages du navigateur, ou prends la carte en photo.</p>
+    <label class="btn primary" for="photo">Prendre une photo</label>
+    <button class="btn" id="retry-cam">Réessayer la caméra</button>
+  </div>
+</div>
+<input id="photo" type="file" accept="image/*" capture="environment" hidden>
+
+<header class="topbar">
+  <div class="brand">Poké<span>Scan</span></div>
+  <div class="group">
+    <button class="iconbtn" id="torch" aria-pressed="false" aria-label="Lampe" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l-1 7h4l-8 13 2-9H7z"/></svg>
+    </button>
+    <button class="iconbtn" id="open-settings" aria-label="Réglages">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+    </button>
+    <button class="iconbtn" id="open-search" aria-label="Rechercher à la main">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+    </button>
+  </div>
+</header>
+
+<div id="hint" role="status" aria-live="polite">Place la carte dans le cadre, numéro en bas bien net</div>
+
+<nav class="bottombar">
+  <button class="pill" id="auto" aria-pressed="true"><span class="dot"></span>Auto</button>
+  <button class="shutter" id="shutter" aria-label="Scanner maintenant"></button>
+  <button class="pill right" id="open-lot">Lot · <span class="num" id="lot-count">0</span></button>
+</nav>
+
+<div id="backdrop"></div>
+
+<section class="sheet" id="sheet-card" aria-label="Fiche de la carte">
+  <div class="grab"></div>
+  <div class="sheet-inner" id="card-body"></div>
+</section>
+
+<section class="sheet" id="sheet-pick" aria-label="Choisir la carte">
+  <div class="grab"></div>
+  <div class="sheet-inner">
+    <div class="sheet-head"><h2 id="pick-title">Quelle carte ?</h2><button class="iconbtn close" data-close aria-label="Fermer">✕</button></div>
+    <p class="status" id="pick-sub">Plusieurs extensions ont ce numéro. Touche celle qui correspond.</p>
+    <div class="picks" id="picks"></div>
+  </div>
+</section>
+
+<section class="sheet" id="sheet-search" aria-label="Recherche manuelle">
+  <div class="grab"></div>
+  <div class="sheet-inner">
+    <div class="sheet-head"><h2>Recherche</h2><button class="iconbtn close" data-close aria-label="Fermer">✕</button></div>
+    <form id="search-form" class="sect">
+      <div class="fields">
+        <label class="field"><span class="label">Nom</span><input id="s-name" type="text" placeholder="Dracaufeu" autocomplete="off" enterkeyhint="search"></label>
+        <label class="field"><span class="label">Numéro</span><input id="s-num" type="text" placeholder="4/102" inputmode="text" autocomplete="off" enterkeyhint="search"></label>
+      </div>
+      <button class="btn primary" type="submit">Chercher</button>
+      <p class="status" id="search-status">Le numéro seul (ex. 4/102) suffit dans la plupart des cas.</p>
+    </form>
+    <div class="picks" id="search-results"></div>
+  </div>
+</section>
+
+<section class="sheet" id="sheet-lot" aria-label="Lot en cours">
+  <div class="grab"></div>
+  <div class="sheet-inner">
+    <div class="sheet-head"><h2>Lot en cours</h2><button class="iconbtn close" data-close aria-label="Fermer">✕</button></div>
+    <div class="lot-sum">
+      <div><span class="label">Valeur Cardmarket</span><b class="num" id="lot-value">0 €</b></div>
+      <div><span class="label">Prix demandé</span><b class="num" id="lot-asked">—</b></div>
+    </div>
+    <p class="status" id="lot-verdict"></p>
+    <div class="lot-list" id="lot-list"></div>
+    <button class="btn" id="lot-clear">Vider le lot</button>
+    <p class="status" id="lot-confirm" hidden></p>
+  </div>
+</section>
+
+<section class="sheet" id="sheet-settings" aria-label="Réglages">
+  <div class="grab"></div>
+  <div class="sheet-inner">
+    <div class="sheet-head"><h2>Réglages</h2><button class="iconbtn close" data-close aria-label="Fermer">✕</button></div>
+    <div class="sect">
+      <span class="label">Reconnaissance par IA (optionnel)</span>
+      <p class="note">Sans clé, PokéScan lit le numéro de la carte lui-même, gratuitement, mais il rate les numéros très petits ou stylisés.
+        Avec une clé API Anthropic, le gros bouton envoie la photo à Claude Haiku, qui reconnaît presque toutes les cartes.
+        Coût : moins d'un centime pour 10 scans. La clé reste sur ce téléphone.</p>
+      <form id="key-form" class="sect">
+        <label class="field"><span class="label">Clé API</span><input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"></label>
+        <div class="actions">
+          <button class="btn primary" type="submit">Enregistrer</button>
+          <button class="btn" type="button" id="key-remove">Supprimer</button>
+        </div>
+        <p class="status" id="key-status"></p>
+      </form>
+      <p class="note">Crée une clé sur console.anthropic.com, rubrique API Keys, après avoir ajouté quelques euros de crédit.</p>
+    </div>
+  </div>
+</section>
+
+<div id="toast" role="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
