@@ -16,11 +16,13 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           mkdir -p tmp vendor/ort && cd tmp
-          npm pack onnxruntime-web@${{ inputs.version }} >/dev/null && tar xzf onnxruntime-web-*.tgz
-          ls package/dist
-          cp package/dist/ort.wasm.min.js package/dist/ort-wasm-simd-threaded.wasm package/dist/ort-wasm-simd-threaded.mjs ../vendor/ort/
-          cp package/LICENSE ../vendor/ort/LICENSE
+          npm pack onnxruntime-web@${{ inputs.version }} 2>&1 | tail -3
+          tar xzf onnxruntime-web-*.tgz
+          ls -la package/dist > ../vendor/ort/DIST.txt
+          for f in ort.wasm.min.js ort-wasm-simd-threaded.wasm ort-wasm-simd-threaded.mjs; do cp package/dist/$f ../vendor/ort/ || echo "manque $f" >> ../vendor/ort/DIST.txt; done
+          cp package/LICENSE ../vendor/ort/LICENSE || true
           echo "${{ inputs.version }}" > ../vendor/ort/VERSION
+          cd .. && rm -rf tmp
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
