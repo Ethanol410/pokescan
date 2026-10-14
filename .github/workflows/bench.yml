@@ -1,0 +1,32 @@
+# Banc d'essai des modèles de vision : calcule les signatures de toutes les cartes pour plusieurs
+# modèles et les publie sur la branche « bench » (sert uniquement à choisir et régler le modèle).
+name: Banc d'essai modèles
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Modèles (zoo ONNX, séparés par des virgules)"
+        default: "mobilenetv3_large_100,efficientnet_b0,resmlp_12_224_dino,lcnet_100"
+permissions:
+  contents: write
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install onnx==1.16.2 onnxruntime==1.19.2 numpy pillow requests
+      - run: python tools/bench_models.py
+        env:
+          MODELS: ${{ inputs.models }}
+      - name: Publier sur la branche bench
+        run: |
+          cd bench
+          git init -q -b bench
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git commit -qm "Banc d'essai : signatures des cartes"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" bench
