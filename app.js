@@ -1202,7 +1202,7 @@ $("search-form").addEventListener("submit", async (e) => {
       if (/^\d{1,3}$/.test(rawNum)) { const n = String(parseInt(rawNum, 10)); p.set("localId", `eq:${n}|${n.padStart(2, "0")}|${n.padStart(3, "0")}`); }
       cards = ((await api("/cards?" + p)) || []).filter((c) => !isPocket(c.id.split("-")[0]));
     }
-    if (!cards.length) { status.textContent = "Aucune carte trouvée. Vérifie l'orthographe (nom français)."; status.classList.add("err"); return; }
+    if (!cards.length) { status.textContent = `Aucune carte trouvée. Vérifie l'orthographe (nom ${{ fr: "français", en: "anglais", ja: "japonais" }[LANG]}, ou change la langue des cartes dans les réglages).`; status.classList.add("err"); return; }
     status.textContent = `${cards.length} résultat${cards.length > 1 ? "s" : ""}${cards.length >= 60 ? " (affine avec le numéro)" : ""}`;
     cards.forEach((c) => box.append(pickButton(c, () => c.pricing ? showCard(c) : showCardById(c.id))));
   } catch (err) {
