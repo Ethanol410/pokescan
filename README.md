@@ -81,8 +81,8 @@ Sur 146 images de quatre vraies vidéos d'iPhone (Safari, cartes en toploader et
 
 | | Modèle de vision | Ancienne empreinte |
 |---|---|---|
-| Bonne carte classée 1re sur 18 604 | **63 %** des images | 6 % |
-| Reconnaissance par l'image seule, sans aucune erreur | 35 % des images, 11 cartes sur 14 | 7 % |
+| Bonne carte classée 1re sur 18 604 | **63 %** des images | 15 % |
+| Reconnaissance par l'image seule, sans aucune erreur | 35 % des images, 11 cartes sur 14 | 6 % |
 | Vérification d'un numéro lu : la bonne carte passe | **83 %** | 73 % |
 | … une carte prise au hasard passe | **0,3 %** | 5 % |
 
