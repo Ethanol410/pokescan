@@ -105,8 +105,21 @@ function useSets(v) {
 
 async function findByNumber(n, total) {
   const sets = (await getSets()).filter((s) => s.cardCount?.official === total);
-  const found = await Promise.all(sets.map((s) => api(`/sets/${encodeURIComponent(s.id)}/${n}`).catch(() => null)));
-  return found.filter(Boolean);
+  let netFail = false;
+  const found = await Promise.all(sets.map(async (s) => {
+    // Par la liste de l'extension puis la fiche de la carte : les deux sont gardées hors ligne
+    // quand l'extension a été préparée (réglages → Préparer une braderie).
+    const list = await setCards(s.id);
+    const hit = list.find((c) => /^\d+$/.test(c.localId) && parseInt(c.localId, 10) === n);
+    try {
+      if (hit) return await api(`/cards/${encodeURIComponent(hit.id)}`);
+      if (list.length) return null;
+      return await api(`/sets/${encodeURIComponent(s.id)}/${n}`);
+    } catch { netFail = true; return null; }
+  }));
+  const cards = found.filter(Boolean);
+  if (!cards.length && netFail) throw new Error("Pas de réseau pour chercher la carte");
+  return cards;
 }
 
 /* ---------- Lecture du texte (OCR) ---------- */
@@ -303,7 +316,7 @@ async function identifyWithAI(snap) {
     if (ai?.name) { showNotFound(`${ai.name}${ai.number ? " " + ai.number + (ai.total ? "/" + ai.total : "") : ""} n'est pas dans la base`); return true; }
     hint(IDLE_HINT()); return false;
   }
-  if (cards.length === 1) presentCard(cards[0].pricing ? cards[0] : await api(`/cards/${encodeURIComponent(cards[0].id)}`));
+  if (cards.length === 1) presentCard(cards[0].pricing ? cards[0] : await api(`/cards/${encodeURIComponent(cards[0].id)}`), { method: "IA" });
   else showPicker(cards, ai.name || "");
   hint(IDLE_HINT());
   return true;
@@ -400,7 +413,7 @@ async function identify(num, snap, manual = false) {
     // Numéro absent ou qui ne correspond pas à l'image : souvent un chiffre mal lu. Plan B : le nom.
     const byName = await identifyByName(num, snap, manual);
     if (byName?.length) {
-      if (byName.length === 1) presentCard(await api(`/cards/${encodeURIComponent(byName[0].id)}`));
+      if (byName.length === 1) presentCard(await api(`/cards/${encodeURIComponent(byName[0].id)}`), { method: "nom", num: `${num.n}/${num.t}` });
       else showPicker(byName, `${num.n}/${num.t}`);
       hint(IDLE_HINT());
       return;
@@ -418,7 +431,7 @@ async function identify(num, snap, manual = false) {
       .sort((a, b) => b.s - a.s);
     if (scored[0].s >= 0.55 && scored[0].s - (scored[1]?.s ?? 0) >= 0.15) cards = [scored[0].c];
   }
-  if (cards.length === 1) presentCard(cards[0]);
+  if (cards.length === 1) presentCard(cards[0], { method: "numéro", num: `${num.n}/${num.t}` });
   else showPicker(cards, `${num.n}/${num.t}`);
   hint(IDLE_HINT());
   } finally { frame.classList.remove("scanning"); }
@@ -544,9 +557,16 @@ async function identifyFromMatch(r, snap) {
         if (hit.length === 1) ids = hit;
       }
     }
-    const cards = (await Promise.all(ids.slice(0, 8).map((id) => api(`/cards/${encodeURIComponent(id)}`).catch(() => null)))).filter(Boolean);
-    if (!cards.length) { hint("Carte reconnue, mais pas de réseau pour charger le prix. Réessaie dans un instant."); return false; }
-    if (cards.length === 1) presentCard(cards[0]);
+    let netFail = false;
+    const cards = (await Promise.all(ids.slice(0, 8).map((id) => api(`/cards/${encodeURIComponent(id)}`).catch(() => { netFail = true; return null; })))).filter(Boolean);
+    if (!cards.length) {
+      if (!netFail) { hint(IDLE_HINT()); return false; }
+      // Pas de réseau : la carte est reconnue (base d'images sur le téléphone), le prix viendra plus tard.
+      presentPending(r.candidates.find((c) => c.id === ids[0]) || r.best);
+      hint(IDLE_HINT());
+      return true;
+    }
+    if (cards.length === 1) presentCard(cards[0], { method: "image", d: +r.best.d.toFixed(3), gap: +r.gap.toFixed(3) });
     else { presentPick(); showPicker(cards, r.best.name); }
     hint(IDLE_HINT());
     return true;
@@ -729,7 +749,8 @@ function beep() {
 }
 
 // Une carte vient d'être reconnue. En rafale : bande en bas et on continue ; sinon : fiche complète.
-function presentCard(c) {
+function presentCard(c, how = {}) {
+  rememberScan(c, how);
   beep(); haptic("success");
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
   try { state.waitChange = video.videoWidth ? thumb() : null; } catch { state.waitChange = null; }
@@ -752,8 +773,7 @@ function showResult(c) {
   const add = el.querySelector(".add");
   add.addEventListener("click", () => {
     if (add.getAttribute("aria-pressed") === "true") return;
-    state.lot.unshift({ id: c.id, name: c.name, num: `${c.localId}${official ? "/" + official : ""}`, set: c.set?.name || "", image: c.image, price, asked: null });
-    save("lot", state.lot); renderLot();
+    addToLot(c);
     add.setAttribute("aria-pressed", "true"); add.textContent = "✓";
     haptic("tap");
     toast(`${c.name} ajouté au lot`);
@@ -765,7 +785,7 @@ function showResult(c) {
 function revealResult(el, error) {
   clearTimeout(hideTimer);
   el.classList.toggle("error", error);
-  el.classList.remove("leaving", "to-lot");
+  el.classList.remove("leaving", "to-lot", "pending");
   el.hidden = false;
   el.style.animation = "none"; void el.offsetWidth; el.style.animation = "";
   document.body.classList.add("has-result");
@@ -810,14 +830,95 @@ function errorBeep() {
   } catch {}
 }
 
-/* ---------- Fiche carte ---------- */
-function priceOf(c) {
-  const pick = (cm) => cm && (cm.trend || cm.avg || cm["trend-holo"] || cm.avg30 || cm.avg7);
-  let p = pick(c.pricing?.cardmarket);
-  // Pas de prix pour la carte : on prend celui d'une de ses versions s'il existe.
-  if (!p) for (const v of c.variants_detailed || []) { p = pick(v.pricing?.cardmarket); if (p) break; }
-  return p || null;
+/* ---------- Erreurs de reconnaissance (gardées sur le téléphone, à partager) ---------- */
+// Dernier scan : comment la carte a été trouvée + une petite image, pour pouvoir signaler une erreur.
+function rememberScan(c, how = {}) {
+  let thumb = null;
+  try {
+    if (video.videoWidth) {
+      const r = frameRectInVideo(), cv = document.createElement("canvas");
+      cv.width = 160; cv.height = Math.round(160 * r.h / r.w);
+      cv.getContext("2d").drawImage(video, r.x, r.y, r.w, r.h, 0, 0, cv.width, cv.height);
+      thumb = cv.toDataURL("image/jpeg", 0.7);
+    }
+  } catch {}
+  state.lastScan = { id: c.id, name: c.name, ...how, thumb, t: Date.now() };
+  noteSeenSet(c.set?.id);
 }
+function noteWrongCard(c, fromScan) {
+  const errs = load("errors", []);
+  const s = fromScan ? state.lastScan : null;
+  errs.unshift({ t: new Date().toISOString(), proposed: { id: c.id, name: c.name }, method: s?.method || "fiche", num: s?.num || null,
+    d: s?.d ?? null, gap: s?.gap ?? null, thumb: s?.thumb || null, correct: null, ua: navigator.userAgent });
+  save("errors", errs.slice(0, 40)); // ~40 erreurs maximum (petites images comprises)
+  state.fixing = 0;
+  refreshErrorsUI();
+}
+function noteCorrectCard(c) {
+  const errs = load("errors", []);
+  if (errs[state.fixing] && !errs[state.fixing].correct && errs[state.fixing].proposed.id !== c.id) {
+    errs[state.fixing].correct = { id: c.id, name: c.name };
+    save("errors", errs); toast("Merci : la bonne carte est notée avec l'erreur");
+  }
+  state.fixing = null;
+  refreshErrorsUI();
+}
+function refreshErrorsUI() {
+  const n = load("errors", []).length, el = $("errors-status");
+  if (!el) return;
+  el.textContent = n ? `${n} erreur${n > 1 ? "s" : ""} notée${n > 1 ? "s" : ""} sur ce téléphone.` : "Aucune erreur notée. Quand une carte est mal reconnue, touche « Ce n'est pas la bonne carte ? » sur sa fiche.";
+  $("errors-share").hidden = $("errors-clear").hidden = !n;
+}
+async function shareErrors() {
+  const data = JSON.stringify({ app: "PokéScan", version: await swVersion(), exported: new Date().toISOString(), errors: load("errors", []) }, null, 1);
+  const file = new File([data], `pokescan-erreurs-${new Date().toISOString().slice(0, 10)}.json`, { type: "application/json" });
+  try {
+    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: "Erreurs PokéScan" }); return; }
+  } catch (e) { if (e.name === "AbortError") return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function swVersion() {
+  try { return (await caches.keys()).find((k) => /^pokescan-v/.test(k)) || null; } catch { return null; }
+}
+
+/* ---------- Fiche carte ---------- */
+// Versions d'une carte et leur prix Cardmarket. Chez Cardmarket, « trend » est le prix de la carte
+// normale (ou de la holo quand la carte n'existe qu'en holo) et « trend-holo » celui de la reverse.
+const TYPE_FR = { Normal: "Normale", Holo: "Holo", Reverse: "Reverse" };
+const firstOf = (...v) => v.find((x) => x) || null;
+function versionsOf(c) {
+  const out = [], seen = new Set();
+  const add = (label, cm, rev) => {
+    const price = rev ? firstOf(cm["trend-holo"], cm["avg-holo"], cm["avg30-holo"]) : firstOf(cm.trend, cm.avg, cm.avg30, cm.avg7);
+    const k = (cm.idProduct || "") + (rev ? "r" : "n");
+    if (!price || seen.has(k)) return;
+    seen.add(k); out.push({ key: k, label, price, cm, rev });
+  };
+  for (const v of c.variants_detailed || []) {
+    const cm = v.pricing?.cardmarket; if (!cm) continue;
+    add([TYPE_FR[v.type] || v.type, v.subtype, ...(v.stamp || [])].filter(Boolean).join(" · "), cm, v.type === "Reverse");
+  }
+  const base = out[0]?.cm || c.pricing?.cardmarket;
+  if (!out.length && base) add(c.variants?.holo && !c.variants?.normal ? "Holo" : "Normale", base, false);
+  if (c.variants?.reverse && !out.some((o) => o.rev) && base) add("Reverse", base, true);
+  return out;
+}
+// État de la carte : coefficient appliqué au prix Cardmarket (qui correspond à une carte parfaite).
+const CONDITIONS = [
+  { key: "mint", label: "Parfaite", k: 1 },
+  { key: "bon", label: "Bon état", k: 0.7 },
+  { key: "abime", label: "Abîmée", k: 0.4 },
+];
+const condOf = (key) => CONDITIONS.find((x) => x.key === key) || CONDITIONS[0];
+// Prix de référence : version choisie (la 1re par défaut) × état (le dernier choisi est retenu).
+function refPrice(c, versionKey = null, condKey = load("cond", "mint")) {
+  const vs = versionsOf(c);
+  const v = vs.find((x) => x.key === versionKey) || vs[0] || null;
+  const cond = condOf(condKey);
+  return { v, vs, cond, base: v?.price ?? null, price: v ? Math.round(v.price * cond.k * 100) / 100 : null };
+}
+function priceOf(c) { return refPrice(c).price; }
 // Libellé court du prix : Cardmarket en €, sinon TCGplayer en $, sinon « Prix ? ».
 function priceLabel(c) {
   const p = priceOf(c);
@@ -827,7 +928,9 @@ function priceLabel(c) {
   return usdPrice ? `${usd(usdPrice)} US` : "Prix ?";
 }
 
-function trendHTML(cm) {
+function trendHTML(cm, rev = false) {
+  const x = rev ? "-holo" : "";
+  cm = { avg30: cm["avg30" + x], avg7: cm["avg7" + x], avg1: cm["avg1" + x] };
   const pts = [["30 jours", cm.avg30], ["7 jours", cm.avg7], ["24 h", cm.avg1]];
   const max = Math.max(...pts.map((p) => p[1] || 0));
   if (!max) return "";
@@ -839,20 +942,6 @@ function trendHTML(cm) {
   const bars = pts.map(([l, v]) => `<div class="bar"><span class="v num">${eur(v)}</span>
     <div class="fill" style="height:${v ? Math.max(5, v / max * 72) : 2}%"></div><span>${l}</span></div>`).join("");
   return `<div class="sect"><div class="sect-h"><span class="label">Moyenne des ventes Cardmarket</span>${delta}</div><div class="trend">${bars}</div></div>`;
-}
-
-function variantsHTML(c) {
-  const seen = new Set(), rows = [];
-  for (const v of c.variants_detailed || []) {
-    const cm = v.pricing?.cardmarket;
-    if (!cm || seen.has(cm.idProduct)) continue;
-    seen.add(cm.idProduct);
-    const label = [v.type, v.subtype, ...(v.stamp || [])].filter(Boolean).join(" · ");
-    rows.push(`<tr><td>${esc(label)}</td><td class="num">${eur(cm.trend || cm.avg)}</td><td class="num">${eur(cm.low)}</td></tr>`);
-  }
-  if (rows.length < 2) return "";
-  return `<div class="sect"><span class="label">Selon la version</span><div class="tablewrap"><table>
-    <thead><tr><th>Version</th><th>Tendance</th><th>Plus bas</th></tr></thead><tbody>${rows.join("")}</tbody></table></div></div>`;
 }
 
 function tablesHTML(c) {
@@ -888,8 +977,10 @@ function linksHTML(c) {
   const cmId = cardmarketId(c);
   const num = String(parseInt(c.localId, 10) || c.localId);
   const links = [
-    ["Cardmarket · fiche de la carte", cmId ? `https://www.cardmarket.com/fr/Pokemon/Products?idProduct=${cmId}`
-      : `https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${e(c.name)}`, "cm"],
+    ...(cmId ? [
+      ["Cardmarket · offres en français", `https://www.cardmarket.com/fr/Pokemon/Products?idProduct=${cmId}&language=2`, "cmfr"],
+      ["Cardmarket · toutes les offres", `https://www.cardmarket.com/fr/Pokemon/Products?idProduct=${cmId}`, "cm"],
+    ] : [["Cardmarket · recherche", `https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${e(c.name)}`, "cm"]]),
     ["Ventes eBay récentes · PriceCharting", `https://www.pricecharting.com/search-products?type=prices&q=${e(c.name + " " + num + (official ? "/" + official : ""))}`, "pc"],
     ["eBay · annonces", `https://www.ebay.fr/sch/i.html?_nkw=${e(q)}&_sop=15`, "eb"],
     ["Vinted", `https://www.vinted.fr/catalog?search_text=${e(q)}`, "vi"],
@@ -912,11 +1003,18 @@ function verdict(asked, ref) {
   return { cls: "bad", text: `Trop cher : ${Math.round((r - 1) * 100)} % au-dessus de Cardmarket` };
 }
 
+// Petits boutons à choix unique (version, état).
+function segHTML(id, items, current) {
+  return `<div class="seg" id="${id}" role="radiogroup">${items.map((x) =>
+    `<button type="button" role="radio" data-k="${esc(x.key)}" aria-checked="${x.key === current}">${esc(x.label)}</button>`).join("")}</div>`;
+}
+
 function showCard(c) {
   state.current = c;
-  const price = priceOf(c);
-  const cm = c.pricing?.cardmarket;
+  let versionKey = null, condKey = load("cond", "mint");
+  let ref = refPrice(c, versionKey, condKey);
   const official = c.set?.cardCount?.official;
+  const fromScan = state.lastScan?.id === c.id;
   $("card-body").innerHTML = `
     <div class="sheet-head"><span class="label">Carte trouvée</span><button class="iconbtn close" data-close aria-label="Fermer">✕</button></div>
     <div class="card-top">
@@ -928,44 +1026,74 @@ function showCard(c) {
           <span class="chip num">${esc(c.localId)}${official ? "/" + official : ""}</span>
           ${c.rarity ? `<span class="chip">${esc(c.rarity)}</span>` : ""}
         </div>
-        <div class="tag"><b class="num">${price ? eur(price) : priceLabel(c)}</b><small>${price ? "Tendance Cardmarket" : "Pas de prix Cardmarket"}</small></div>
-        ${cm?.updated ? `<span class="updated">Prix du ${new Date(cm.updated).toLocaleDateString("fr-FR")}</span>` : `<span class="updated">Pas de prix Cardmarket pour cette carte</span>`}
+        <div class="tag"><b class="num" id="ref-price"></b><small id="ref-label"></small></div>
+        <span class="updated" id="ref-updated"></span>
       </div>
     </div>
+    ${ref.vs.length > 1 ? `<div class="sect"><span class="label">Version</span>${segHTML("seg-version", ref.vs, ref.v.key)}</div>` : ""}
+    ${ref.v ? `<div class="sect"><span class="label">État de la carte</span>${segHTML("seg-cond", CONDITIONS, condKey)}</div>` : ""}
     <div class="verdict">
       <label class="label" for="asked">Prix demandé par le vendeur</label>
       <div class="row"><input id="asked" type="text" inputmode="decimal" placeholder="ex. 5" autocomplete="off"><span class="label">€</span></div>
-      <span class="out" id="verdict-out">${verdict(null, price).text}</span>
+      <span class="out" id="verdict-out"></span>
     </div>
     <div class="actions">
       <button class="btn primary" id="add-lot">Ajouter au lot</button>
       <button class="btn" data-close>Scanner la suivante</button>
     </div>
     <button class="linkbtn" id="wrong-card">Ce n'est pas la bonne carte ?</button>
-    ${cm ? trendHTML(cm) : ""}
-    ${variantsHTML(c)}
+    <div id="trend-box"></div>
     ${tablesHTML(c)}
     <div class="sect"><span class="label">Dernières ventes et annonces</span><div class="links">${linksHTML(c)}</div></div>`;
   const askedEl = $("asked");
-  askedEl.addEventListener("input", () => {
-    const v = parseFloat(askedEl.value.replace(",", "."));
-    const out = verdict(isNaN(v) ? null : v, price);
+  const asked = () => { const v = parseFloat(askedEl.value.replace(",", ".")); return isNaN(v) ? null : v; };
+  function update() {
+    ref = refPrice(c, versionKey, condKey);
+    $("ref-price").textContent = ref.price ? eur(ref.price) : priceLabel(c);
+    $("ref-label").textContent = !ref.price ? "Pas de prix Cardmarket"
+      : ref.cond.k < 1 ? `${ref.cond.label} · ${eur(ref.base)} parfaite` : "Tendance Cardmarket";
+    const upd = ref.v?.cm?.updated;
+    $("ref-updated").textContent = upd ? `Prix du ${new Date(upd).toLocaleDateString("fr-FR")}${ref.vs.length > 1 ? " · " + ref.v.label : ""}` : "Pas de prix Cardmarket pour cette carte";
+    const out = verdict(asked(), ref.price);
     const el = $("verdict-out"); el.textContent = out.text; el.className = "out " + out.cls;
+    $("trend-box").innerHTML = ref.v ? trendHTML(ref.v.cm, ref.v.rev) : "";
+  }
+  update();
+  const seg = (id, fn) => $(id)?.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-k]"); if (!b) return;
+    $(id).querySelectorAll("button").forEach((x) => x.setAttribute("aria-checked", x === b));
+    fn(b.dataset.k); haptic("tap"); update();
   });
+  seg("seg-version", (k) => { versionKey = k; });
+  seg("seg-cond", (k) => { condKey = k; save("cond", k); }); // l'état choisi reste pour les cartes suivantes
+  askedEl.addEventListener("input", update);
   $("wrong-card").addEventListener("click", () => {
+    noteWrongCard(c, fromScan);
     $("s-name").value = c.name; $("s-num").value = "";
     $("search-results").innerHTML = "";
-    $("search-status").textContent = "Corrige le nom ou ajoute le numéro, puis cherche.";
+    $("search-status").textContent = "Corrige le nom ou ajoute le numéro, puis cherche. La bonne carte sera notée avec l'erreur.";
     openSheet("sheet-search");
   });
   $("add-lot").addEventListener("click", () => {
-    const v = parseFloat(askedEl.value.replace(",", "."));
-    state.lot.unshift({ id: c.id, name: c.name, num: `${c.localId}${official ? "/" + official : ""}`, set: c.set?.name || "", image: c.image, price, asked: isNaN(v) ? null : v });
-    save("lot", state.lot); renderLot();
+    addToLot(c, ref, asked());
     toast(`${c.name} ajouté au lot`);
     closeSheets();
   });
+  if (state.fixing != null && !fromScan) noteCorrectCard(c);
   openSheet("sheet-card");
+}
+
+function noteSeenSet(sid) {
+  if (!sid) return;
+  const seen = load("seenSets", []);
+  if (seen[0] !== sid) save("seenSets", [sid, ...seen.filter((x) => x !== sid)].slice(0, 30));
+}
+function addToLot(c, ref = refPrice(c), asked = null) {
+  noteSeenSet(c.set?.id);
+  const official = c.set?.cardCount?.official;
+  state.lot.unshift({ id: c.id, name: c.name, num: `${c.localId}${official ? "/" + official : ""}`, set: c.set?.name || "", image: c.image,
+    price: ref.price, version: ref.vs.length > 1 ? ref.v.label : null, cond: ref.cond.k < 1 ? ref.cond.label : null, asked });
+  save("lot", state.lot); renderLot();
 }
 
 async function showCardById(id) {
@@ -988,7 +1116,7 @@ function showPicker(cards, label) {
   $("pick-title").textContent = `Quelle carte ${label} ?`;
   const box = $("picks"); box.innerHTML = "";
   // les cartes « légères » (liste d'une extension) n'ont pas encore leurs prix : on les charge au choix
-  cards.forEach((c) => box.append(pickButton(c, async () => showCard(c.set ? c : await api(`/cards/${encodeURIComponent(c.id)}`)))));
+  cards.forEach((c) => box.append(pickButton(c, async () => { const full = c.set ? c : await api(`/cards/${encodeURIComponent(c.id)}`); rememberScan(full, { method: "choix", among: cards.length }); showCard(full); })));
   openSheet("sheet-pick");
 }
 
@@ -1024,6 +1152,145 @@ $("search-form").addEventListener("submit", async (e) => {
   }
 });
 
+/* ---------- Réseau faible : cartes en attente de prix ---------- */
+// Carte reconnue sans réseau : on la note (avec son nom, tiré de la base d'images) et on
+// complète prix, image et extension dès que le réseau revient.
+function presentPending(card) {
+  const pending = load("pending", []);
+  if (!pending.some((p) => p.id === card.id)) pending.unshift({ id: card.id, name: card.name, t: Date.now() });
+  save("pending", pending.slice(0, 100));
+  beep(); haptic("success");
+  frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
+  try { state.waitChange = video.videoWidth ? thumb() : null; } catch { state.waitChange = null; }
+  const el = $("result");
+  el.innerHTML = `<span class="nf-icon pending" aria-hidden="true">⏳</span>
+    <div class="who"><b></b><span>Reconnue sans réseau · prix dès que le réseau revient</span></div>
+    <button class="add" type="button" aria-label="Ajouter au lot" aria-pressed="false">+</button>`;
+  el.querySelector("b").textContent = card.name;
+  const add = el.querySelector(".add");
+  add.addEventListener("click", () => {
+    state.lot.unshift({ id: card.id, name: card.name, num: card.id.split("-").pop(), set: "", image: null, price: null, pending: true, asked: null });
+    save("lot", state.lot); renderLot();
+    save("pending", load("pending", []).filter((p) => p.id !== card.id)); renderPending(); // elle est suivie dans le lot
+    haptic("tap"); toast(`${card.name} ajouté au lot (prix en attente)`);
+    hideResult(true);
+  });
+  revealResult(el, false); el.classList.add("pending");
+  renderPending();
+  schedulePendingSync();
+}
+let pendingTimer = null, syncing = false;
+function schedulePendingSync(delay = 20000) {
+  clearTimeout(pendingTimer);
+  if (load("pending", []).length || state.lot.some((x) => x.pending)) pendingTimer = setTimeout(syncPending, delay);
+}
+async function syncPending() {
+  if (syncing) return;
+  syncing = true;
+  try {
+    const ids = new Set([...load("pending", []).map((p) => p.id), ...state.lot.filter((x) => x.pending).map((x) => x.id)]);
+    let done = 0;
+    for (const id of ids) {
+      let c;
+      try { c = await api(`/cards/${encodeURIComponent(id)}`); } catch { break; } // toujours pas de réseau
+      if (!c) continue;
+      done++; noteSeenSet(c.set?.id);
+      const official = c.set?.cardCount?.official, ref = refPrice(c);
+      state.lot.forEach((x) => { if (x.pending && x.id === id) Object.assign(x, { pending: false, price: ref.price, image: c.image, set: c.set?.name || "",
+        num: `${c.localId}${official ? "/" + official : ""}`, version: ref.vs.length > 1 ? ref.v.label : null, cond: ref.cond.k < 1 ? ref.cond.label : null }); });
+      const pending = load("pending", []);
+      const p = pending.find((x) => x.id === id);
+      if (p) { Object.assign(p, { price: ref.price, image: c.image, set: c.set?.name || "", ready: true }); save("pending", pending); }
+    }
+    if (done) { save("lot", state.lot); renderLot(); renderPending(); toast("Réseau revenu : prix mis à jour"); }
+  } finally { syncing = false; schedulePendingSync(); }
+}
+window.addEventListener("online", () => syncPending());
+// Liste « Scannées sans réseau » dans le lot : prix une fois revenus, + pour ajouter au lot.
+function renderPending() {
+  const box = $("pending-list"), pending = load("pending", []);
+  $("pending-sect").hidden = !pending.length;
+  box.innerHTML = "";
+  pending.forEach((p, i) => {
+    const row = document.createElement("div"); row.className = "lot-item";
+    row.innerHTML = `<img alt="" src="${p.image ? img(p.image) : ""}"><div class="who"><b></b><span></span></div>
+      <span class="num">${p.ready ? eur(p.price) : "⏳"}</span><button class="rm" aria-label="Retirer">✕</button>`;
+    row.querySelector("b").textContent = p.name;
+    row.querySelector(".who span").textContent = p.ready ? `${p.set} · toucher pour la fiche` : "en attente de réseau";
+    row.querySelector(".who").addEventListener("click", () => p.ready ? showCardById(p.id) : syncPending());
+    row.querySelector(".rm").addEventListener("click", () => { const l = load("pending", []); l.splice(i, 1); save("pending", l); renderPending(); });
+    box.append(row);
+  });
+}
+
+/* ---------- Préparer une braderie : prix (et images) des extensions choisies, gardés hors ligne ---------- */
+// Chaque carte est demandée une fois à TCGdex ; le service worker garde les réponses (cache
+// « pokescan-api ») et les images (« pokescan-img »), qui servent ensuite sans réseau.
+const prep = { running: false, stop: false };
+async function renderPrepSets() {
+  const box = $("prep-sets"); if (!box) return;
+  let sets;
+  try { sets = await getSets(); } catch { box.innerHTML = `<p class="note">Liste des extensions indisponible sans réseau.</p>`; return; }
+  const seen = load("seenSets", []), chosen = new Set(load("prepSets", seen.slice(0, 3))), done = load("prepDone", {});
+  const q = norm($("prep-filter").value || "");
+  // Les plus récentes d'abord, celles déjà scannées en tête.
+  const list = [...sets].reverse().sort((a, b) => (seen.includes(b.id) - seen.includes(a.id)))
+    .filter((s) => !q || norm(s.name).includes(q) || norm(s.id).includes(q));
+  box.innerHTML = "";
+  for (const s of list.slice(0, 80)) {
+    const l = document.createElement("label"); l.className = "toggle";
+    l.innerHTML = `<input type="checkbox"><span></span>`;
+    l.querySelector("input").checked = chosen.has(s.id);
+    l.querySelector("span").textContent = `${s.name} (${s.cardCount?.total ?? s.cardCount?.official ?? "?"} cartes)` +
+      (seen.includes(s.id) ? " · déjà scannée" : "") + (done[s.id] ? ` · prête le ${new Date(done[s.id]).toLocaleDateString("fr-FR")}` : "");
+    l.querySelector("input").addEventListener("change", (e) => {
+      const cur = new Set(load("prepSets", seen.slice(0, 3)));
+      e.target.checked ? cur.add(s.id) : cur.delete(s.id);
+      save("prepSets", [...cur]); prepButton();
+    });
+    box.append(l);
+  }
+  prepButton();
+}
+function prepButton() {
+  const n = load("prepSets", load("seenSets", []).slice(0, 3)).length;
+  $("prep-go").textContent = prep.running ? "Arrêter" : n ? `Télécharger ${n} extension${n > 1 ? "s" : ""}` : "Coche des extensions";
+  $("prep-go").disabled = !prep.running && !n;
+}
+async function runPrep() {
+  if (prep.running) { prep.stop = true; return; }
+  const ids = load("prepSets", load("seenSets", []).slice(0, 3)), withImg = $("prep-img").checked;
+  prep.running = true; prep.stop = false; prepButton();
+  const status = $("prep-status");
+  let total = 0, ok = 0, failed = 0;
+  try {
+    for (const sid of ids) {
+      if (prep.stop) break;
+      status.textContent = `Liste des cartes : ${sid}…`;
+      const set = await api(`/sets/${encodeURIComponent(sid)}`).catch(() => null);
+      if (!set?.cards) { failed++; continue; }
+      total += set.cards.length;
+      let i = 0;
+      const worker = async () => {
+        while (i < set.cards.length && !prep.stop) {
+          const c = set.cards[i++];
+          try {
+            await api(`/cards/${encodeURIComponent(c.id)}`);
+            if (withImg && c.image) await fetch(img(c.image), { mode: "no-cors" }).catch(() => {});
+            ok++;
+          } catch { failed++; }
+          status.textContent = `${set.name} : ${ok} cartes prêtes${failed ? `, ${failed} échecs` : ""}…`;
+        }
+      };
+      await Promise.all(Array.from({ length: 6 }, worker));
+      if (!prep.stop) { const done = load("prepDone", {}); done[sid] = Date.now(); save("prepDone", done); }
+    }
+    status.textContent = prep.stop ? `Arrêté : ${ok} cartes prêtes.` : `Terminé : ${ok} cartes prêtes hors ligne${failed ? ` (${failed} échecs, relance plus tard)` : ""}.`;
+  } finally { prep.running = false; prepButton(); renderPrepSets(); }
+}
+$("prep-go").addEventListener("click", runPrep);
+$("prep-filter").addEventListener("input", () => renderPrepSets());
+
 /* ---------- Lot ---------- */
 function renderLot() {
   $("lot-count").textContent = state.lot.length;
@@ -1032,6 +1299,11 @@ function renderLot() {
   const asked = askedItems.reduce((s, x) => s + x.asked, 0);
   $("lot-value").textContent = eur(value);
   $("lot-asked").textContent = askedItems.length ? eur(asked) : "—";
+  // Offre suggérée : la valeur Cardmarket moins la remise choisie, arrondie à un prix « rond ».
+  const off = load("offer", 35);
+  $("lot-offer").textContent = value ? eur(roundOffer(value * (1 - off / 100))) : "—";
+  $("lot-offer-label").textContent = `Offre à proposer (−${off} %)`;
+  $("offer-seg").querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", +b.dataset.k === off));
   const v = askedItems.length === state.lot.length && state.lot.length ? verdict(asked, value) : null;
   const vEl = $("lot-verdict");
   vEl.textContent = v ? v.text : state.lot.length ? "Ajoute le prix demandé de chaque carte pour comparer le lot entier." : "";
@@ -1043,13 +1315,31 @@ function renderLot() {
     row.innerHTML = `<img alt="" src="${img(x.image)}"><div class="who"><b></b><span></span></div>
       <span class="num">${eur(x.price)}</span><button class="rm" aria-label="Retirer">✕</button>`;
     row.querySelector("b").textContent = x.name;
-    row.querySelector(".who span").textContent = `${x.num} · ${x.set}${x.asked != null ? " · demandé " + eur(x.asked) : ""}`;
+    row.querySelector(".who span").textContent = [x.num, x.set, x.version, x.cond, x.pending ? "prix en attente de réseau" : null,
+      x.asked != null ? "demandé " + eur(x.asked) : null].filter(Boolean).join(" · ");
     row.querySelector(".who").addEventListener("click", () => showCardById(x.id));
     row.querySelector(".rm").addEventListener("click", () => { state.lot.splice(i, 1); save("lot", state.lot); renderLot(); });
     list.append(row);
   });
   $("lot-clear").hidden = !state.lot.length;
 }
+function roundOffer(v) {
+  const step = v < 10 ? 0.5 : v < 100 ? 1 : 5;
+  return Math.max(step, Math.round(v / step) * step);
+}
+$("offer-seg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-k]"); if (!b) return;
+  save("offer", +b.dataset.k); haptic("tap"); renderLot();
+});
+$("errors-share").addEventListener("click", shareErrors);
+let errClearArmed = false;
+$("errors-clear").addEventListener("click", () => {
+  if (!errClearArmed) { errClearArmed = true; $("errors-clear").textContent = "Touche encore pour effacer"; setTimeout(() => { errClearArmed = false; $("errors-clear").textContent = "Effacer"; }, 3000); return; }
+  errClearArmed = false; $("errors-clear").textContent = "Effacer";
+  save("errors", []); refreshErrorsUI();
+});
+refreshErrorsUI();
+renderPending(); schedulePendingSync(3000);
 let clearArmed = false;
 $("lot-clear").addEventListener("click", () => {
   if (!clearArmed) { clearArmed = true; $("lot-clear").textContent = "Touche encore pour tout effacer"; setTimeout(() => { clearArmed = false; $("lot-clear").textContent = "Vider le lot"; }, 3000); return; }
@@ -1111,7 +1401,7 @@ $("opt-haptics").addEventListener("change", (e) => { save("haptics", e.target.ch
 $("opt-rafale").addEventListener("change", (e) => save("rafale", e.target.checked));
 $("opt-sound").addEventListener("change", (e) => { save("sound", e.target.checked); if (e.target.checked) beep(); });
 $("open-settings").addEventListener("click", () => {
-  refreshIndexUI(); $("apikey").value = load("apikey", ""); refreshKeyUI(); openSheet("sheet-settings"); });
+  refreshIndexUI(); $("apikey").value = load("apikey", ""); refreshKeyUI(); refreshErrorsUI(); renderPrepSets(); openSheet("sheet-settings"); });
 $("key-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const k = $("apikey").value.trim();

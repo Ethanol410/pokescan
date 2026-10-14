@@ -28,19 +28,27 @@ Sur la bande : touche-la pour ouvrir la **fiche complète**, ou touche **+** pou
 |---|---|
 | **Pastille « Auto »** (verte = activée) | Scan automatique en continu (voir « Comment ça marche »). |
 | **Gros bouton jaune « Scanner »** | Scan immédiat de ce qui est dans le cadre, sans attendre que la carte soit immobile. Au toucher : flash, ligne de scan et anneau qui tourne jusqu'au résultat. Si la caméra est indisponible, il ouvre l'appareil photo. |
-| **Lot · n** | Les cartes ajoutées au lot : valeur totale Cardmarket face au total demandé par le vendeur. Pratique pour un classeur. |
+| **Lot · n** | Les cartes ajoutées au lot : valeur totale Cardmarket (version et état compris) face au total demandé, et **l'offre à proposer** au vendeur (−25, −35 ou −45 %, arrondie à un prix rond). Pratique pour un classeur. |
 | **Loupe** | Recherche à la main par nom et/ou numéro (ex. `4/102`). |
 | **Curseurs** | Réglages : état de la base d'images, mode rafale, bip, clé IA. |
 | **Éclair** | Lampe, si le téléphone le permet. À éviter sur les cartes en pochette : le reflet gêne la reconnaissance. |
 
 Sur la fiche d'une carte :
+- **Version** (quand la carte en a plusieurs) : *Normale*, *Reverse*, *Holo*, 1re édition, sans ombre… Chaque version a son propre prix Cardmarket.
+- **État de la carte** : *Parfaite* (prix Cardmarket), *Bon état* (×0,7) ou *Abîmée* (×0,4). L'état choisi est retenu pour les cartes suivantes, pratique en braderie où la plupart des cartes ont été jouées. Le prix de référence, le verdict et la valeur du lot en tiennent compte.
 - **Prix demandé par le vendeur** : tape son prix, l'appli répond *bonne affaire* (30 % ou plus sous Cardmarket), *prix correct* ou *trop cher*.
-- **Ce n'est pas la bonne carte ?** : ouvre la recherche pour corriger.
+- **Ce n'est pas la bonne carte ?** : ouvre la recherche pour corriger, et note l'erreur sur le téléphone (carte proposée, méthode, petite image, puis la bonne carte une fois trouvée). *Réglages → Erreurs de reconnaissance → Partager* les envoie en fichier, pour améliorer les réglages sur de vrais cas.
 - **Dernières ventes et annonces** :
-  - **Cardmarket** ouvre directement la fiche de la carte (identifiant Cardmarket fourni par TCGdex), plus une recherche approximative ;
+  - **Cardmarket · offres en français** et **toutes les offres** ouvrent directement la fiche de la carte (identifiant Cardmarket fourni par TCGdex). Le prix affiché par l'appli est une moyenne toutes langues ; les offres françaises sont souvent un peu moins chères ;
   - **Ventes eBay récentes · PriceCharting** : prix des dernières ventes eBay, sans compte (recherche par le nom anglais de la carte) ;
   - **eBay** : annonces en cours, moins chères d'abord (le filtre « ventes réussies » d'eBay demande un compte) ;
   - **Vinted** et **Leboncoin**, pré-remplis avec la carte.
+
+### Sans réseau
+
+- La **reconnaissance par l'image** marche sans réseau. Si le prix ne peut pas être chargé, la carte est quand même reconnue (bande ⏳ « prix en attente ») : touche **+** pour l'ajouter au lot, ou retrouve-la dans le lot sous *Scannées sans réseau*. Les prix se complètent tout seuls dès que le réseau revient.
+- Réseau faible : si une carte a déjà été chargée, sa copie s'affiche au bout de 3,5 s au plus, et se met à jour en arrière-plan.
+- **Préparer une braderie** (réglages) : en Wi-Fi, coche les extensions que tu risques de croiser (celles déjà scannées sont en tête) et télécharge leurs prix (et leurs images) à l'avance. Ensuite, scan et prix marchent sans réseau pour ces cartes, y compris par la lecture du numéro.
 
 Réglages utiles : **mode rafale** (bande en bas, activé par défaut ; désactivé, chaque carte ouvre sa fiche complète), **bip** et **vibrations**. Sur Android, les vibrations passent par le vibreur. Sur iPhone, Safari n'a pas d'API de vibration : l'appli utilise le petit « tic » des interrupteurs iOS (iOS 17.4 ou plus récent), garanti après un toucher, à vérifier pour le scan automatique.
 
@@ -63,7 +71,7 @@ Quand la carte est immobile, l'appli essaie dans cet ordre :
 | 5. Vérification | Le numéro lu est **contrôlé par l'image** : les cartes portant ce numéro sont classées parmi les 18 604 selon leurs contours (plus robustes aux reflets de toploader que les couleurs). Une carte qui ne ressemble pas à l'image est refusée : un numéro mal lu (`111/10`, `100/107` au lieu de `100/101`) ne donne plus de fausse carte ni de faux « absente de la base ». |
 | 6. Nom (plan B) | Si le numéro lu ne colle pas (un chiffre manqué : `41/146` au lieu de `141/146`, fréquent sur les full art en boîtier), l'appli lit le nom en haut de la carte et cherche, dans les extensions de ce total, la carte de ce nom au numéro voisin ; l'image départage (version normale ou full art), sinon elle te propose les 2-3 versions. |
 | Prix | API TCGdex (gratuite, sans clé) : Cardmarket en € (mis à jour chaque jour), TCGplayer en $, prix par version (1re édition, reverse…). |
-| Hors ligne | Un service worker garde l'appli, la base d'images et les cartes déjà vues ; le lot et la clé restent sur le téléphone. |
+| Hors ligne | Un service worker garde l'appli, la base d'images, les prix et images des cartes déjà vues ou préparées (caches conservés d'une version à l'autre) ; le lot, les erreurs notées et la clé restent sur le téléphone. |
 
 ### Fiabilité mesurée
 
@@ -82,7 +90,8 @@ Coût : environ 1 centime pour 100 scans. La clé reste sur ton téléphone et n
 
 ## Limites connues
 
-- **Prix** : tendance Cardmarket du produit, toutes langues confondues. Une carte FR se vend souvent un peu moins cher : vérifie sur Cardmarket pour une grosse carte.
+- **Prix** : tendance Cardmarket du produit, toutes langues confondues (aucune API gratuite ne donne le prix des seules cartes françaises). Une carte FR se vend souvent un peu moins cher : le lien *offres en français* les montre.
+- **État** : les coefficients (×0,7 bon état, ×0,4 abîmée) sont des ordres de grandeur ; pour une grosse carte, regarde les offres du même état sur Cardmarket.
 - **Ventes individuelles** : aucune API gratuite ne les fournit, d'où les liens vers les sites.
 - **Cartes absentes de la base d'images** (pas d'image dans TCGdex) : numéro, IA ou loupe.
 - **Nouvelles extensions** : la base est recalculée chaque lundi.
@@ -95,7 +104,7 @@ Site statique, sans build : `index.html`, `app.js`, `match.js`, `locate.js`, `sw
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v12`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v13`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
 **Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` (avec le numéro de version de l'algorithme, `algo` : l'appli ignore une base calculée avec un ancien algorithme) + `index/cards-<version>.bin` (288 octets par carte). En local :
 

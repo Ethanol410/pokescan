@@ -194,6 +194,12 @@ td:first-child{color:var(--dim)}
 .lot-sum{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .lot-sum > div{background:var(--raised);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
 .lot-sum b{font:800 1.4rem var(--display)}
+.lot-sum .offer{grid-column:1 / -1;background:color-mix(in srgb,var(--sticker) 14%,var(--raised))}
+.lot-sum .offer b{color:var(--sticker)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1 1 auto;min-height:40px;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--raised);color:var(--text);font:600 .9rem var(--body)}
+.seg button[aria-checked="true"]{background:var(--sticker);color:var(--sticker-ink);border-color:var(--sticker)}
+.seg.small button{min-height:34px;padding:5px 8px;font-size:.8rem}
 .lot-list{display:flex;flex-direction:column}
 .lot-item{display:grid;grid-template-columns:40px 1fr auto auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
 .lot-item img{width:40px;border-radius:3px;aspect-ratio:63/88;object-fit:cover;background:var(--raised)}
@@ -234,11 +240,15 @@ body.has-result #hint{visibility:hidden}
 #result.error .close-nf{grid-area:close}
 #result.error .search-btn{grid-area:btn;width:100%}
 #result .nf-icon{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--bad) 22%,transparent);color:var(--bad);font:800 1.4rem var(--display)}
+#result.pending{grid-template-columns:44px 1fr 44px}
+#result .nf-icon.pending{background:color-mix(in srgb,var(--sticker) 22%,transparent);font-size:1.2rem}
 #result.error .who b{color:var(--bad)}
 #result.error .who span{white-space:normal;line-height:1.3;font-size:.78rem}
 #result .search-btn{border:0;border-radius:10px;background:var(--sticker);color:var(--sticker-ink);font-weight:700;padding:0 12px;height:44px}
 @media (prefers-reduced-motion:reduce){#result.leaving,#result.leaving.to-lot{animation:none;opacity:0}}
 .toggle{display:flex;gap:10px;align-items:flex-start;font-size:.92rem;color:var(--text)}
+.prep-sets{display:flex;flex-direction:column;gap:10px;max-height:240px;overflow:auto;padding:10px;background:var(--raised);border-radius:12px}
+.filter{background:var(--night);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font:inherit;width:100%;box-sizing:border-box}
 .toggle input{width:22px;height:22px;flex:0 0 auto;accent-color:var(--sticker);margin:0}
 
 #toast{position:fixed;left:50%;top:calc(66px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:20;background:var(--text);color:var(--night);
@@ -340,9 +350,17 @@ body.has-result #hint{visibility:hidden}
     <div class="lot-sum">
       <div><span class="label">Valeur Cardmarket</span><b class="num" id="lot-value">0 €</b></div>
       <div><span class="label">Prix demandé</span><b class="num" id="lot-asked">—</b></div>
+      <div class="offer"><span class="label" id="lot-offer-label">Offre à proposer</span><b class="num" id="lot-offer">—</b>
+        <div class="seg small" id="offer-seg" role="radiogroup" aria-label="Remise">
+          <button type="button" role="radio" data-k="25">−25 %</button><button type="button" role="radio" data-k="35">−35 %</button><button type="button" role="radio" data-k="45">−45 %</button>
+        </div></div>
     </div>
     <p class="status" id="lot-verdict"></p>
     <div class="lot-list" id="lot-list"></div>
+    <div class="sect" id="pending-sect" hidden>
+      <span class="label">Scannées sans réseau</span>
+      <div class="lot-list" id="pending-list"></div>
+    </div>
     <button class="btn" id="lot-clear">Vider le lot</button>
     <p class="status" id="lot-confirm" hidden></p>
   </div>
@@ -361,6 +379,23 @@ body.has-result #hint{visibility:hidden}
       <label class="toggle"><input type="checkbox" id="opt-rafale" checked><span>Mode rafale : afficher le résultat en bas et continuer à scanner (sinon, ouvrir la fiche complète)</span></label>
       <label class="toggle"><input type="checkbox" id="opt-sound" checked><span>Bip quand une carte est reconnue (son grave si elle est introuvable)</span></label>
       <label class="toggle"><input type="checkbox" id="opt-haptics" checked><span>Vibrations (Android, et iPhone avec iOS 17.4 ou plus récent)</span></label>
+    </div>
+    <div class="sect">
+      <span class="label">Préparer une braderie (sans réseau)</span>
+      <p class="note">Télécharge à l'avance, en Wi-Fi, les prix des extensions que tu risques de croiser : ils s'afficheront même sans réseau. Les extensions déjà scannées sont en tête.</p>
+      <input id="prep-filter" class="filter" type="search" placeholder="Filtrer les extensions…" autocomplete="off">
+      <div id="prep-sets" class="prep-sets"></div>
+      <label class="toggle"><input type="checkbox" id="prep-img" checked><span>Avec les images des cartes (plus lourd : environ 3 Mo par extension)</span></label>
+      <button class="btn primary" type="button" id="prep-go">Télécharger</button>
+      <p class="status" id="prep-status"></p>
+    </div>
+    <div class="sect">
+      <span class="label">Erreurs de reconnaissance</span>
+      <p class="note" id="errors-status"></p>
+      <div class="actions">
+        <button class="btn" type="button" id="errors-share">Partager les erreurs</button>
+        <button class="btn" type="button" id="errors-clear">Effacer</button>
+      </div>
     </div>
     <div class="sect">
       <span class="label">Reconnaissance par IA (optionnel)</span>
