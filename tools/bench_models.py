@@ -102,11 +102,10 @@ def main():
         so = ort.SessionOptions(); so.intra_op_num_threads = os.cpu_count()
         sess = ort.InferenceSession(q, so); inp = sess.get_inputs()[0].name
         embs = []; t = time.time()
-        for i in range(0, len(ok), 64):
-            batch = np.stack([prep(Image.open(p)) for _, p in ok[i:i + 64]])
-            e = sess.run(None, {inp: batch})[0].reshape(len(batch), -1)
+        for i, (_, p) in enumerate(ok):  # le modèle exporté attend une image à la fois
+            e = sess.run(None, {inp: prep(Image.open(p))[None]})[0].reshape(1, -1)
             embs.append(e / np.linalg.norm(e, axis=1, keepdims=True))
-            if i % 3200 == 0: print(f"  {name} {i}/{len(ok)} {time.time() - t:.0f}s", flush=True)
+            if i % 3000 == 0: print(f"  {name} {i}/{len(ok)} {time.time() - t:.0f}s", flush=True)
         np.save(f"{OUT}/{name}.npy", np.concatenate(embs).astype(np.float16))
         print(name, "fini en", int(time.time() - t), "s", flush=True)
 
