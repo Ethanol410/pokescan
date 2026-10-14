@@ -19,10 +19,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install onnx==1.16.2 onnxruntime==1.19.2 numpy pillow requests
-      - run: python tools/bench_models.py
+      - run: mkdir -p bench && python -u tools/bench_models.py 2>&1 | tee bench/log.txt; exit ${PIPESTATUS[0]}
+        shell: bash
         env:
           MODELS: ${{ inputs.models }}
       - name: Publier sur la branche bench
+        if: always()
         run: |
           cd bench
           git init -q -b bench

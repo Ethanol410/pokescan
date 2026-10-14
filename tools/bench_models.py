@@ -18,6 +18,7 @@ MODELS = os.environ.get("MODELS", "mobilenetv3_large_100,efficientnet_b0,resmlp_
 OUT = "bench"; os.makedirs(OUT + "/models", exist_ok=True); os.makedirs("cache", exist_ok=True)
 MEAN = np.array([0.485, 0.456, 0.406], np.float32); STD = np.array([0.229, 0.224, 0.225], np.float32)
 S = requests.Session()
+S.headers["User-Agent"] = "Mozilla/5.0 (PokeScan bench; +https://github.com/Ethanol410/pokescan)"
 
 def feature_model(name):
     path = f"cache/{name}.onnx"
@@ -51,8 +52,10 @@ def prep(im):
 
 def cards():
     pocket = lambda i: __import__("re").match(r"^[AB]\d|^P-[A-Z]$", i.split("-")[0])
-    fr = S.get("https://api.tcgdex.net/v2/fr/cards", timeout=120).json()
-    en = {c["id"]: c["image"] for c in S.get("https://api.tcgdex.net/v2/en/cards", timeout=120).json() if c.get("image")}
+    def get(u):
+        r = S.get(u, timeout=120); print(u, r.status_code, r.headers.get("content-type"), flush=True); r.raise_for_status(); return r.json()
+    fr = get("https://api.tcgdex.net/v2/fr/cards")
+    en = {c["id"]: c["image"] for c in get("https://api.tcgdex.net/v2/en/cards") if c.get("image")}
     out = []
     for c in fr:
         if pocket(c["id"]): continue
