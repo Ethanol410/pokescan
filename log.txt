@@ -1,0 +1,23 @@
+https://api.tcgdex.net/v2/fr/cards 200 application/json; charset=utf-8
+https://api.tcgdex.net/v2/en/cards 200 application/json; charset=utf-8
+18616 cartes
+18604 images
+lcnet_100 fp32 6530 Ko  poids fp16 3292 Ko
+  lcnet_100 0/18604 0s
+  lcnet_100 3000/18604 22s
+  lcnet_100 6000/18604 44s
+  lcnet_100 9000/18604 66s
+  lcnet_100 12000/18604 88s
+  lcnet_100 15000/18604 110s
+  lcnet_100 18000/18604 133s
+lcnet_100 fini en 137 s
+  0/5000 0s
+  500/5000 107s
+  1000/5000 213s
+  1500/5000 320s
+  2000/5000 427s
+  2500/5000 534s
+  3000/5000 641s
+  3500/5000 747s
+  4000/5000 855s
+  4500/5000 964s
