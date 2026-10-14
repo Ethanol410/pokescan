@@ -656,6 +656,7 @@ function frameViews(source, rect) {
 const VISION = {
   gap: 0.05,     // écart minimal entre la 1re carte et la 1re d'un autre nom (0 erreur sur 146 images réelles)
   strong: 0.08,  // écart suffisant sur une seule image (sinon il faut la même carte deux fois)
+  minSim: 0.46,  // ressemblance minimale : bonnes cartes ≥ 0,47, images sans carte ≤ 0,45
   maxRank: 50,   // vérification d'un numéro lu : dans les 50 plus ressemblantes (bonne carte : 83 % des images ; carte au hasard : 0,3 %)
   nameRank: 500, // plan B par le nom : plus souple, le nom et le numéro voisin limitent déjà le choix
 };
@@ -682,7 +683,8 @@ async function imageDecide(source, rect) {
   if (window.CardVision?.ready) {
     const r = CardVision.search(await visionVecs(source, rect));
     if (!r.best) return null;
-    return { ok: r.gap >= VISION.gap, best: { id: r.best.id, name: r.best.name, d: 1 - r.best.s }, gap: r.gap, candidates: r.same, strong: r.gap >= VISION.strong };
+    const sure = r.best.s >= VISION.minSim;
+    return { ok: sure && r.gap >= VISION.gap, best: { id: r.best.id, name: r.best.name, d: 1 - r.best.s }, gap: r.gap, candidates: r.same, strong: sure && r.gap >= VISION.strong };
   }
   if (matcher.ready) return matcher.M.decide(...frameViews(source, rect), DECIDE);
   return null;

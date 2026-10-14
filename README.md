@@ -112,7 +112,7 @@ Site statique, sans build : `index.html`, `app.js`, `vision.js`, `match.js`, `lo
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v14`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v15`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
 **Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` (avec le numéro de version de l'algorithme, `algo` : l'appli ignore une base calculée avec un ancien algorithme) + `index/cards-<version>.bin` (288 octets par carte). En local :
 

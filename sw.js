@@ -1,6 +1,6 @@
 /* Service worker PokéScan : l'appli s'ouvre même sans réseau,
    et les cartes déjà consultées restent disponibles hors ligne. */
-const VERSION = "pokescan-v14";
+const VERSION = "pokescan-v15";
 // Caches gardés d'une version à l'autre : base d'images, prix et images de cartes (préparation braderie).
 const KEEP = ["pokescan-index", "pokescan-api", "pokescan-img", "pokescan-vision"];
 const SHELL = ["./", "index.html", "app.js", "match.js", "locate.js", "vision.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
