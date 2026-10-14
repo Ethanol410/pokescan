@@ -7,6 +7,9 @@ on:
       models:
         description: "Modèles (zoo ONNX, séparés par des virgules)"
         default: "mobilenetv3_large_100,efficientnet_b0,resmlp_12_224_dino,lcnet_100"
+      aug:
+        description: "Modèle pour les photos simulées (vide = pas de simulation)"
+        default: ""
 permissions:
   contents: write
 jobs:
@@ -23,6 +26,11 @@ jobs:
         shell: bash
         env:
           MODELS: ${{ inputs.models }}
+      - run: python -u tools/bench_aug.py 2>&1 | tee -a bench/log.txt; exit ${PIPESTATUS[0]}
+        if: ${{ inputs.aug != '' }}
+        shell: bash
+        env:
+          MODEL: ${{ inputs.aug }}
       - name: Publier sur la branche bench
         if: always()
         run: |
