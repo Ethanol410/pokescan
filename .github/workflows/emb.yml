@@ -1,0 +1,45 @@
+# Reconnaissance par modèle de vision : index des signatures des cartes (fr, en, ja), mis à jour
+# chaque lundi (nouvelles cartes seulement). « rebuild » réapprend le modèle et refait tout.
+name: Index modèle de vision
+on:
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: "Réapprendre la projection et recalculer tous les index"
+        type: boolean
+        default: false
+      langs:
+        description: "Langues"
+        default: "fr en ja"
+  schedule:
+    - cron: "37 4 * * 1"
+permissions:
+  contents: write
+concurrency:
+  group: emb
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install onnx==1.16.2 onnxruntime==1.19.2 numpy pillow requests
+      - name: Index par langue
+        shell: bash
+        run: |
+          for L in ${{ inputs.langs || 'fr en ja' }}; do
+            LANG_CARDS=$L REBUILD=$([ "$L" = fr ] && [ "${{ inputs.rebuild }}" = true ] && echo 1 || echo 0) python -u tools/build_emb.py || echo "::warning::index $L non construit"
+          done
+      - name: Enregistrer
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A models index
+          if git diff --cached --quiet; then echo "Rien de nouveau"; exit 0; fi
+          git commit -m "Index du modèle de vision mis à jour"
+          git pull --rebase origin main
+          git push

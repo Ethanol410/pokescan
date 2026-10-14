@@ -1,0 +1,27 @@
+# Copie dans le dépôt les fichiers d'onnxruntime-web (moteur du modèle de vision), pour que
+# l'appli les serve elle-même (hors ligne, sans dépendre d'un CDN). À lancer à la main.
+name: Fichiers onnxruntime-web
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version d'onnxruntime-web"
+        default: "1.19.2"
+permissions:
+  contents: write
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p tmp vendor/ort && cd tmp
+          npm pack onnxruntime-web@${{ inputs.version }} >/dev/null && tar xzf onnxruntime-web-*.tgz
+          ls package/dist
+          cp package/dist/ort.wasm.min.js package/dist/ort-wasm-simd-threaded.wasm package/dist/ort-wasm-simd-threaded.mjs ../vendor/ort/
+          cp package/LICENSE ../vendor/ort/LICENSE
+          echo "${{ inputs.version }}" > ../vendor/ort/VERSION
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor/ort && git commit -m "onnxruntime-web ${{ inputs.version }}" && git pull --rebase origin main && git push
