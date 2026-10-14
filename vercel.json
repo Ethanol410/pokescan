@@ -46,7 +46,7 @@
       ]
     },
     {
-      "source": "/vendor/ort/(.*)",
+      "source": "/vendor/(.*)",
       "headers": [
         {
           "key": "Cache-Control",

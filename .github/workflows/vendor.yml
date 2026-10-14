@@ -15,15 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          mkdir -p tmp vendor/ort && cd tmp
+          mkdir -p tmp vendor/ort-${{ inputs.version }} && cd tmp
           npm pack onnxruntime-web@${{ inputs.version }} 2>&1 | tail -3
           tar xzf onnxruntime-web-*.tgz
-          ls -la package/dist > ../vendor/ort/DIST.txt
-          for f in ort.wasm.min.js ort-wasm-simd-threaded.wasm ort-wasm-simd-threaded.mjs; do cp package/dist/$f ../vendor/ort/ || echo "manque $f" >> ../vendor/ort/DIST.txt; done
-          cp package/LICENSE ../vendor/ort/LICENSE || true
-          echo "${{ inputs.version }}" > ../vendor/ort/VERSION
+          ls -la package/dist > ../vendor/ort-${{ inputs.version }}/DIST.txt
+          for f in ort.wasm.min.js ort-wasm-simd-threaded.wasm ort-wasm-simd-threaded.mjs; do cp package/dist/$f ../vendor/ort-${{ inputs.version }}/ || echo "manque $f" >> ../vendor/ort-${{ inputs.version }}/DIST.txt; done
+          cp package/LICENSE ../vendor/ort-${{ inputs.version }}/LICENSE || true
+          echo "${{ inputs.version }}" > ../vendor/ort-${{ inputs.version }}/VERSION
           cd .. && rm -rf tmp
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add vendor/ort && git commit -m "onnxruntime-web ${{ inputs.version }}" && git pull --rebase origin main && git push
+          git add vendor/ort-${{ inputs.version }} && git commit -m "onnxruntime-web ${{ inputs.version }}" && git pull --rebase origin main && git push

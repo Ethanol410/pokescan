@@ -46,8 +46,8 @@
     try {
       const [m, meta] = await Promise.all([getJSON("models/card.json", true), getJSON(`index/${lang}/emb.json`, true)]);
       if (meta.model !== m.file) throw new Error("index et modèle pas à jour ensemble");
-      await loadScript("vendor/ort/ort.wasm.min.js");
-      ort.env.wasm.wasmPaths = new URL("vendor/ort/", location.href).href;
+      await loadScript("vendor/ort-1.19.2/ort.wasm.min.js");
+      ort.env.wasm.wasmPaths = new URL("vendor/ort-1.19.2/", location.href).href;
       ort.env.wasm.numThreads = 1; // pas d'isolation multi-fils sur iPhone : un seul fil, plus simple
       if (!session || model !== m.file) {
         const bytes = await getBin("models/" + m.file);

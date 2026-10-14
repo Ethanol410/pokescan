@@ -120,7 +120,7 @@ python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche su
 npm i --no-save playwright && npx playwright install chromium && node tools/build-index.mjs
 ```
 
-**Modèle de vision** : construit par la tâche *Index modèle de vision* (`.github/workflows/emb.yml`, `tools/build_emb.py`). Chaque lundi, elle ajoute les nouvelles cartes aux index `index/fr|en|ja/emb-<version>.bin` (512 octets par carte). Avec l'option *rebuild*, elle réapprend la projection (photos simulées : `tools/bench_aug.py`) et refait le modèle `models/card-<version>.onnx` et tous les index. Le moteur onnxruntime-web est servi par l'appli (`vendor/ort/`, copié par la tâche *Fichiers onnxruntime-web*). Le choix du modèle a été fait avec *Banc d'essai modèles* (`tools/bench_models.py`) : LCNet, EfficientNet-B0, MobileNetV3 et ResMLP-DINO comparés sur les vidéos réelles ; LCNet, le plus petit, était aussi le meilleur.
+**Modèle de vision** : construit par la tâche *Index modèle de vision* (`.github/workflows/emb.yml`, `tools/build_emb.py`). Chaque lundi, elle ajoute les nouvelles cartes aux index `index/fr|en|ja/emb-<version>.bin` (512 octets par carte). Avec l'option *rebuild*, elle réapprend la projection (photos simulées : `tools/bench_aug.py`) et refait le modèle `models/card-<version>.onnx` et tous les index. Le moteur onnxruntime-web est servi par l'appli (`vendor/ort-1.19.2/`, copié par la tâche *Fichiers onnxruntime-web*). Le choix du modèle a été fait avec *Banc d'essai modèles* (`tools/bench_models.py`) : LCNet, EfficientNet-B0, MobileNetV3 et ResMLP-DINO comparés sur les vidéos réelles ; LCNet, le plus petit, était aussi le meilleur.
 
 ### Fichiers
 
@@ -128,7 +128,7 @@ npm i --no-save playwright && npx playwright install chromium && node tools/buil
 - `app.js` : caméra, scan auto, IA, lecture du numéro, recherche, fiche prix, rafale, lot, réglages
 - `vision.js` : modèle de vision (signature de la photo, recherche dans l'index)
 - `models/`, `index/fr|en|ja/` : modèle de vision et index par langue (générés)
-- `vendor/ort/` : moteur onnxruntime-web (licence MIT)
+- `vendor/ort-1.19.2/` : moteur onnxruntime-web (licence MIT)
 - `match.js` : empreintes simples (ancienne méthode, sert de relais) et recherche dans la base
 - `locate.js` : repérage de la carte dans l'image
 - `index/` : base d'images (générée, ne pas modifier à la main)

@@ -774,6 +774,7 @@ function openSheet(id) {
   $(id).scrollTop = 0;
 }
 function closeSheets() {
+  state.fixing = null; // correction d'erreur abandonnée : la prochaine carte ouverte n'est pas « la bonne »
   sheets.forEach((s) => $(s).classList.remove("open"));
   $("backdrop").classList.remove("on");
   state.pausedUntil = Date.now() + 1200; // laisse le temps de retirer la carte
@@ -808,6 +809,7 @@ function beep() {
 
 // Une carte vient d'être reconnue. En rafale : bande en bas et on continue ; sinon : fiche complète.
 function presentCard(c, how = {}) {
+  if (!c) { toast("Carte introuvable (réseau ?)"); return; }
   rememberScan(c, how);
   beep(); haptic("success");
   frame.classList.add("hit"); setTimeout(() => frame.classList.remove("hit"), 900);
@@ -937,7 +939,7 @@ async function shareErrors() {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 async function swVersion() {
-  try { return (await caches.keys()).find((k) => /^pokescan-v/.test(k)) || null; } catch { return null; }
+  try { return (await caches.keys()).find((k) => /^pokescan-v\d/.test(k)) || null; } catch { return null; }
 }
 
 /* ---------- Fiche carte ---------- */
@@ -1174,7 +1176,7 @@ function showPicker(cards, label) {
   $("pick-title").textContent = `Quelle carte ${label} ?`;
   const box = $("picks"); box.innerHTML = "";
   // les cartes « légères » (liste d'une extension) n'ont pas encore leurs prix : on les charge au choix
-  cards.forEach((c) => box.append(pickButton(c, async () => { const full = c.set ? c : await api(`/cards/${encodeURIComponent(c.id)}`); rememberScan(full, { method: "choix", among: cards.length }); showCard(full); })));
+  cards.forEach((c) => box.append(pickButton(c, async () => { const full = c.set ? c : await api(`/cards/${encodeURIComponent(c.id)}`).catch(() => null); if (!full) return toast("Carte introuvable (réseau ?)"); rememberScan(full, { method: "choix", among: cards.length }); showCard(full); })));
   openSheet("sheet-pick");
 }
 
@@ -1227,7 +1229,7 @@ function presentPending(card) {
   el.querySelector("b").textContent = card.name;
   const add = el.querySelector(".add");
   add.addEventListener("click", () => {
-    state.lot.unshift({ id: card.id, name: card.name, num: card.id.split("-").pop(), set: "", image: null, price: null, pending: true, asked: null });
+    state.lot.unshift({ id: card.id, lang: LANG, name: card.name, num: card.id.split("-").pop(), set: "", image: null, price: null, pending: true, asked: null });
     save("lot", state.lot); renderLot();
     save("pending", load("pending", []).filter((p) => p.id !== card.id)); renderPending(); // elle est suivie dans le lot
     haptic("tap"); toast(`${card.name} ajouté au lot (prix en attente)`);
@@ -1240,13 +1242,13 @@ function presentPending(card) {
 let pendingTimer = null, syncing = false;
 function schedulePendingSync(delay = 20000) {
   clearTimeout(pendingTimer);
-  if (load("pending", []).length || state.lot.some((x) => x.pending)) pendingTimer = setTimeout(syncPending, delay);
+  if (load("pending", []).some((p) => !p.ready) || state.lot.some((x) => x.pending)) pendingTimer = setTimeout(syncPending, delay);
 }
 async function syncPending() {
   if (syncing) return;
   syncing = true;
   try {
-    const ids = new Set([...load("pending", []).map((p) => p.id), ...state.lot.filter((x) => x.pending).map((x) => x.id)]);
+    const ids = new Set([...load("pending", []).filter((p) => !p.ready).map((p) => p.id), ...state.lot.filter((x) => x.pending).map((x) => x.id)]);
     let done = 0;
     for (const id of ids) {
       let c;
