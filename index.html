@@ -371,6 +371,13 @@ body.has-result #hint{visibility:hidden}
   <div class="sheet-inner">
     <div class="sheet-head"><h2>Réglages</h2><button class="iconbtn close" data-close aria-label="Fermer">✕</button></div>
     <div class="sect">
+      <span class="label">Langue des cartes</span>
+      <select id="opt-lang" class="filter" aria-label="Langue des cartes">
+        <option value="fr">Français</option><option value="en">English (anglais)</option><option value="ja">日本語 (japonais)</option>
+      </select>
+      <p class="note">Change la base de cartes, les noms, l'index d'images et la lecture du nom. Les cartes déjà dans le lot gardent leur langue.</p>
+    </div>
+    <div class="sect">
       <span class="label">Reconnaissance</span>
       <p class="note" id="index-status">Base d'images : chargement…</p>
     </div>
@@ -420,6 +427,7 @@ body.has-result #hint{visibility:hidden}
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script src="match.js"></script>
 <script src="locate.js"></script>
+<script src="vision.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

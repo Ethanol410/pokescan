@@ -1,9 +1,9 @@
 /* Service worker PokéScan : l'appli s'ouvre même sans réseau,
    et les cartes déjà consultées restent disponibles hors ligne. */
-const VERSION = "pokescan-v13";
+const VERSION = "pokescan-v14";
 // Caches gardés d'une version à l'autre : base d'images, prix et images de cartes (préparation braderie).
-const KEEP = ["pokescan-index", "pokescan-api", "pokescan-img"];
-const SHELL = ["./", "index.html", "app.js", "match.js", "locate.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
+const KEEP = ["pokescan-index", "pokescan-api", "pokescan-img", "pokescan-vision"];
+const SHELL = ["./", "index.html", "app.js", "match.js", "locate.js", "vision.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -74,5 +74,9 @@ self.addEventListener("fetch", (e) => {
   // Index d'images : le fichier change de nom à chaque mise à jour, on le garde tel quel.
   if (url.origin === location.origin && /\/index\/cards-[\w]+\.bin$/.test(url.pathname)) return e.respondWith(indexFile(req));
   if (url.origin === location.origin && url.pathname.endsWith("/index/cards.json")) return e.respondWith(networkFirst(req));
+  // Modèle de vision : moteur, modèle et index (noms qui changent à chaque version) gardés hors ligne.
+  if (url.origin === location.origin && (/\/models\/card-\w+\.onnx$/.test(url.pathname) || /\/index\/\w+\/emb-\w+\.bin$/.test(url.pathname) || url.pathname.includes("/vendor/ort/")))
+    return e.respondWith(cacheFirst(req, "pokescan-vision"));
+  if (url.origin === location.origin && (url.pathname.endsWith("/models/card.json") || /\/index\/\w+\/emb\.json$/.test(url.pathname))) return e.respondWith(networkFirst(req));
   if (url.origin === location.origin) return e.respondWith(staleWhileRevalidate(req));      // l'appli elle-même
 });

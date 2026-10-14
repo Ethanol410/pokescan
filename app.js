@@ -8,7 +8,11 @@
  */
 "use strict";
 
-const API = "https://api.tcgdex.net/v2/fr";
+// Langue des cartes (réglages) : base de cartes, noms, index d'images et lecture du nom.
+const LANGS = { fr: { label: "Français", ocr: "fra", cm: 2, cmLabel: "en français" }, en: { label: "English", ocr: "eng", cm: 1, cmLabel: "en anglais" },
+  ja: { label: "日本語", ocr: null, cm: 7, cmLabel: "en japonais" } };
+const LANG = LANGS[localStorage.getItem("pokescan:lang")?.replace(/"/g, "")] ? localStorage.getItem("pokescan:lang").replace(/"/g, "") : "fr";
+const API = "https://api.tcgdex.net/v2/" + LANG;
 const $ = (id) => document.getElementById(id);
 const video = $("video"), frame = $("frame"), hintEl = $("hint");
 
@@ -57,7 +61,7 @@ function haptic(kind = "tap") {
 
 // Message sous le cadre ; busy = petite roue qui tourne devant (une recherche est en cours).
 function hint(html, busy = false) { hintEl.innerHTML = html; hintEl.classList.toggle("busy", busy); }
-const IDLE_HINT = () => (typeof matcher !== "undefined" && matcher.ready) || load("apikey", "")
+const IDLE_HINT = () => (typeof matcher !== "undefined" && imageReady()) || load("apikey", "")
   ? "Tiens la carte immobile dans le cadre, sans reflet"
   : "Remplis le cadre avec la carte, sans lampe ni reflet sur le numéro";
 let toastTimer;
@@ -66,11 +70,11 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 2200);
 }
 
-async function api(path) {
+async function api(path, lang = LANG) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 9000);
   try {
-    const r = await fetch(API + path, { signal: ctrl.signal });
+    const r = await fetch("https://api.tcgdex.net/v2/" + lang + path, { signal: ctrl.signal });
     if (r.status === 404) return null;
     if (!r.ok) throw new Error("Le serveur TCGdex a répondu " + r.status);
     return await r.json();
@@ -83,11 +87,11 @@ async function api(path) {
 /* ---------- Extensions (mises en cache 3 jours) ---------- */
 async function getSets() {
   if (state.sets) return state.sets;
-  const cached = load("sets", null);
+  const cached = load("sets-" + LANG, null);
   if (cached && Date.now() - cached.t < 3 * 864e5) return useSets(cached.v);
   try {
     const v = await api("/sets");
-    save("sets", { t: Date.now(), v });
+    save("sets-" + LANG, { t: Date.now(), v });
     return useSets(v);
   } catch (e) {
     if (cached) return useSets(cached.v);
@@ -163,7 +167,8 @@ async function getNumWorker() {
   return state.numWorker;
 }
 async function getNameWorker() {
-  if (!state.nameWorker) state.nameWorker = Tesseract.createWorker("fra").then(async (w) => { await w.setParameters({ tessedit_pageseg_mode: "6" }); return w; });
+  if (!LANGS[LANG].ocr) return null; // pas de lecture du nom pour les cartes japonaises
+  if (!state.nameWorker) state.nameWorker = Tesseract.createWorker(LANGS[LANG].ocr).then(async (w) => { await w.setParameters({ tessedit_pageseg_mode: "6" }); return w; });
   return state.nameWorker;
 }
 
@@ -237,7 +242,7 @@ async function readNumber(snap, only) {
 }
 
 /* ---------- Reconnaissance par IA (optionnelle, clé API Anthropic) ---------- */
-const AI_PROMPT = `Tu identifies une carte Pokémon (souvent en français) sur une photo.
+const AI_PROMPT = `Tu identifies une carte Pokémon (${{ fr: "souvent en français", en: "en anglais", ja: "en japonais" }[LANG]}) sur une photo.
 Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {"name": "nom exact imprimé en haut de la carte", "number": "numéro avant la barre, ex. 006", "total": "nombre après la barre, ex. 165, ou null", "set": "nom de l'extension si tu le reconnais, sinon null"}
 Le numéro est imprimé en petit en bas de la carte (ex. « 006/165 »). Si ce n'est pas une carte Pokémon, renvoie {"name": null}.`;
@@ -354,12 +359,18 @@ function digitDistance(a, b) { // distance d'édition entre deux numéros (« 41
   return d[a.length][b.length];
 }
 
-// Rangs de vérification par l'image (carte repérée + cadre + 2 cadrages serrés : calibré).
-function imageRanks(ids, snap, photo) {
-  const views = video.videoWidth && !photo ? frameViews(video, frameRectInVideo())
-    : frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height });
+// Rangs de vérification par l'image. Modèle de vision s'il est prêt, sinon empreinte (match.js) :
+// carte repérée + cadre + 2 cadrages serrés (calibré). max = rang maximal pour « ça ressemble ».
+async function imageRanks(ids, snap, photo) {
+  const src = video.videoWidth && !photo ? video : snap;
+  const rect = src === video ? frameRectInVideo() : { x: 0, y: 0, w: snap.width, h: snap.height };
+  if (window.CardVision?.ready) {
+    const vecs = await visionVecs(src, rect);
+    return { ranks: new Map(CardVision.ranks(vecs, ids).map((r) => [r.id, r.rank])), max: VISION.maxRank, nameMax: VISION.nameRank };
+  }
+  const views = frameViews(src, rect);
   const pick = [views[0], ...views[1].slice(0, views.nloc), ...views[1].slice(-2)];
-  return new Map(matcher.M.verify(pick, ids).map((r) => [r.id, r.rank]));
+  return { ranks: new Map(matcher.M.verify(pick, ids).map((r) => [r.id, r.rank])), max: VERIFY_MAX_RANK, nameMax: 5000 };
 }
 
 // Plan B quand le numéro lu ne colle pas (chiffre manqué : « 41/146 » pour « 141/146 ») : on lit
@@ -380,9 +391,9 @@ async function identifyByName(num, snap, manual) {
     if (cands.length) break;
   }
   if (!cands.length || cands.length > 6) return null;
-  if (matcher.ready) {
-    const ranks = imageRanks(cands.map((c) => c.id), snap, manual?.photo);
-    const ok = cands.filter((c) => ranks.get(c.id) != null && ranks.get(c.id) <= 5000).sort((x, y) => ranks.get(x.id) - ranks.get(y.id));
+  if (imageReady()) {
+    const { ranks, nameMax } = await imageRanks(cands.map((c) => c.id), snap, manual?.photo);
+    const ok = cands.filter((c) => ranks.get(c.id) != null && ranks.get(c.id) <= nameMax).sort((x, y) => ranks.get(x.id) - ranks.get(y.id));
     if (ok.length) cands = ok.length === 1 || ranks.get(ok[1].id) > 3 * ranks.get(ok[0].id) ? [ok[0]] : ok;
     else if (!manual) return null; // l'image ne ressemble à aucune : on n'insiste pas en scan auto
   }
@@ -400,10 +411,10 @@ async function identify(num, snap, manual = false) {
   catch (e) { hint(esc(e.message)); return; }
 
   // L'image confirme (ou non) le numéro lu, et choisit entre les cartes qui portent ce numéro.
-  if (cards.length && matcher.ready) {
+  if (cards.length && imageReady()) {
     hint(`Vérification de la carte <span class="num">${num.n}/${num.t}</span> sur l'image…`, true);
-    const ranks = imageRanks(cards.map((c) => c.id), snap, manual?.photo);
-    const good = cards.filter((c) => ranks.get(c.id) != null && ranks.get(c.id) <= VERIFY_MAX_RANK).sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
+    const { ranks, max } = await imageRanks(cards.map((c) => c.id), snap, manual?.photo);
+    const good = cards.filter((c) => ranks.get(c.id) != null && ranks.get(c.id) <= max).sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
     const unknown = cards.filter((c) => ranks.get(c.id) == null); // sans image dans la base : invérifiables
     if (good.length) cards = (good.length === 1 || ranks.get(good[1].id) > 4 * ranks.get(good[0].id)) && (!unknown.length || !manual) ? [good[0]] : [...good, ...(manual ? unknown : [])];
     else cards = manual ? unknown : []; // en scan auto, on ne propose pas de cartes invérifiables
@@ -475,10 +486,10 @@ async function scanOnce(manual) {
     const cardSnap = cr === fr ? null : snapshot(video, cr);
     let snap = frameSnap;
     // Gros bouton : l'image d'abord, puis l'IA (si clé), puis la lecture du numéro.
-    if (manual && matcher.ready) {
+    if (manual && imageReady()) {
       // Depuis la vidéo (et non l'instantané) pour pouvoir essayer aussi des cadrages plus larges.
-      const r = matcher.M.decide(...frameViews(video, frameRectInVideo()), DECIDE);
-      if (r.ok && (await identifyFromMatch(r, snap))) return;
+      const r = await imageDecide(video, frameRectInVideo());
+      if (r?.ok && (await identifyFromMatch(r, snap))) return;
     }
     if (manual && load("apikey", "")) {
       try { if (await identifyWithAI(snap)) return; }
@@ -516,6 +527,10 @@ async function scanOnce(manual) {
 /* ---------- Reconnaissance par l'image (index des cartes, voir match.js) ---------- */
 const matcher = { ready: false, loading: false, M: null, meta: null, failed: false };
 async function loadIndex() {
+  // Modèle de vision (en parallèle, plus lourd : ~15 Mo la première fois)
+  if (window.CardVision && !CardVision.ready && !CardVision.loading) CardVision.load(LANG).then(() => { refreshIndexUI(); if (!hintEl.classList.contains("busy")) hint(IDLE_HINT()); });
+  // Empreintes simples (match.js) : base française, valable aussi pour les cartes anglaises (mêmes identifiants).
+  if (LANG === "ja") { matcher.failed = true; refreshIndexUI(); return; }
   if (matcher.ready || matcher.loading || !window.CardMatch) return;
   matcher.loading = true;
   try {
@@ -537,10 +552,14 @@ async function loadIndex() {
 function refreshIndexUI() {
   const el = $("index-status");
   if (!el) return;
-  el.textContent = matcher.ready
-    ? `Base d'images : ${matcher.meta.count.toLocaleString("fr-FR")} cartes, mise à jour le ${new Date(matcher.meta.built).toLocaleDateString("fr-FR")}. Elle reste sur ce téléphone.`
-    : matcher.loading ? "Base d'images : téléchargement en cours (environ 6 Mo, une seule fois)…"
-    : "Base d'images indisponible pour l'instant : l'appli lit le numéro de la carte à la place.";
+  const V = window.CardVision;
+  const vision = V?.ready ? `Modèle de vision : prêt, ${V.meta.count.toLocaleString("fr-FR")} cartes (${LANGS[LANG].label}), mis à jour le ${new Date(V.meta.built).toLocaleDateString("fr-FR")}.`
+    : V?.loading ? "Modèle de vision : téléchargement en cours (environ 15 Mo, une seule fois)…"
+    : `Modèle de vision indisponible pour l'instant${V?.failed ? " (" + V.failed + ")" : ""}.`;
+  const simple = matcher.ready
+    ? `Empreintes simples : ${matcher.meta.count.toLocaleString("fr-FR")} cartes, mises à jour le ${new Date(matcher.meta.built).toLocaleDateString("fr-FR")}.`
+    : matcher.loading ? "Empreintes simples : téléchargement en cours (environ 6 Mo)…" : "";
+  el.textContent = [vision, simple, "Tout reste sur ce téléphone."].filter(Boolean).join(" ");
 }
 
 // Carte reconnue par l'image : on charge sa fiche (prix). Si la même illustration existe dans
@@ -632,6 +651,43 @@ function frameViews(source, rect) {
   return out;
 }
 
+/* ---------- Modèle de vision (vision.js) ---------- */
+// Seuils calibrés sur de vraies vidéos d'iPhone (voir README, « Fiabilité mesurée »).
+const VISION = {
+  gap: 0.05,     // écart minimal entre la 1re carte et la 1re d'un autre nom (0 erreur sur 146 images réelles)
+  strong: 0.08,  // écart suffisant sur une seule image (sinon il faut la même carte deux fois)
+  maxRank: 50,   // vérification d'un numéro lu : dans les 50 plus ressemblantes (bonne carte : 83 % des images ; carte au hasard : 0,3 %)
+  nameRank: 500, // plan B par le nom : plus souple, le nom et le numéro voisin limitent déjà le choix
+};
+function imageReady() { return !!(window.CardVision?.ready || matcher.ready); }
+// Signatures de la carte : carte repérée, cadre, cadre resserré. Sur la vidéo, gardées 0,4 s
+// (la carte est immobile) pour ne pas refaire le calcul entre la reconnaissance et la vérification.
+let visionCache = null;
+async function visionVecs(source, rect) {
+  const now = Date.now();
+  if (source === video && visionCache && now - visionCache.t < 400) return visionCache.v;
+  const W = source.videoWidth || source.width, H = source.videoHeight || source.height;
+  const rects = [];
+  const loc = locateCard(source, rect);
+  if (loc && loc.w < rect.w * 0.95 && loc.w > rect.w * 0.4) rects.push(loc);
+  rects.push(rect);
+  const r = { w: rect.w * 0.85, h: rect.h * 0.85 }; r.x = rect.x + (rect.w - r.w) / 2; r.y = rect.y + (rect.h - r.h) / 2; rects.push(r);
+  const v = [];
+  for (const q of rects) if (q.x >= 0 && q.y >= 0 && q.x + q.w <= W + 1 && q.y + q.h <= H + 1) v.push(await CardVision.embed(source, q));
+  if (source === video) visionCache = { t: now, v };
+  return v;
+}
+// Décision par l'image, au même format que l'empreinte (match.js) : { ok, best, gap, candidates, strong }.
+async function imageDecide(source, rect) {
+  if (window.CardVision?.ready) {
+    const r = CardVision.search(await visionVecs(source, rect));
+    if (!r.best) return null;
+    return { ok: r.gap >= VISION.gap, best: { id: r.best.id, name: r.best.name, d: 1 - r.best.s }, gap: r.gap, candidates: r.same, strong: r.gap >= VISION.strong };
+  }
+  if (matcher.ready) return matcher.M.decide(...frameViews(source, rect), DECIDE);
+  return null;
+}
+
 async function autoStep() {
   const t = thumb(), now = Date.now();
   const moving = auto.prev ? meanDiff(t, auto.prev) > 7 : true;
@@ -641,7 +697,7 @@ async function autoStep() {
     else { setReady(false); return; }
   }
   if (auto.aiLast && meanDiff(t, auto.aiLast) > 22) auto.aiArmed = true;
-  if (moving) { auto.stableSince = 0; auto.votes = []; locCache = null; setReady(false); return; }
+  if (moving) { auto.stableSince = 0; auto.votes = []; locCache = null; visionCache = null; setReady(false); return; }
   auto.stableSince ||= now;
   if (spread(t) < 20) { setReady(false); return; } // cadre vide ou uni
   setReady(true);
@@ -649,9 +705,9 @@ async function autoStep() {
   if (now - auto.stableSince > 5000 && !hintEl.classList.contains("busy") && !aiScan.busy) { showNotFound(); return; }
 
   // 1. Image
-  if (matcher.ready) {
-    const r = matcher.M.decide(...frameViews(video, frameRectInVideo()), DECIDE);
-    if (r.ok) {
+  if (imageReady()) {
+    const r = await imageDecide(video, frameRectInVideo());
+    if (r?.ok) {
       auto.votes = auto.votes.filter((v) => now - v.t < 2500);
       auto.votes.push({ id: r.best.id, t: now });
       if (r.strong || auto.votes.filter((v) => v.id === r.best.id).length >= 2) {
@@ -664,7 +720,7 @@ async function autoStep() {
   // 2. IA (si clé), après un court moment sans résultat par l'image
   const key = load("apikey", "");
   if (key && !aiScan.broken) {
-    if (auto.aiArmed && now - auto.stableSince > (matcher.ready ? 1200 : 600)) {
+    if (auto.aiArmed && now - auto.stableSince > (imageReady() ? 1200 : 600)) {
       auto.aiArmed = false; auto.aiLast = t; aiScan.busy = true;
       try {
         await identifyWithAI(snapshot(video, frameRectInVideo()));
@@ -694,9 +750,9 @@ async function scanPhoto(file) {
   // Sur une photo, on suppose que la carte remplit l'image.
   const snap = snapshot(im, { x: 0, y: 0, w: im.naturalWidth, h: im.naturalHeight });
   try {
-    if (matcher.ready) {
-      const r = matcher.M.decide(...frameViews(snap, { x: 0, y: 0, w: snap.width, h: snap.height }), DECIDE);
-      if (r.ok && (await identifyFromMatch(r, snap))) return;
+    if (imageReady()) {
+      const r = await imageDecide(snap, { x: 0, y: 0, w: snap.width, h: snap.height });
+      if (r?.ok && (await identifyFromMatch(r, snap))) return;
     }
     if (load("apikey", "")) {
       try { if (await identifyWithAI(snap)) return; } catch (e) { toast(e.message); }
@@ -978,7 +1034,7 @@ function linksHTML(c) {
   const num = String(parseInt(c.localId, 10) || c.localId);
   const links = [
     ...(cmId ? [
-      ["Cardmarket · offres en français", `https://www.cardmarket.com/fr/Pokemon/Products?idProduct=${cmId}&language=2`, "cmfr"],
+      [`Cardmarket · offres ${LANGS[LANG].cmLabel}`, `https://www.cardmarket.com/fr/Pokemon/Products?idProduct=${cmId}&language=${LANGS[LANG].cm}`, "cmfr"],
       ["Cardmarket · toutes les offres", `https://www.cardmarket.com/fr/Pokemon/Products?idProduct=${cmId}`, "cm"],
     ] : [["Cardmarket · recherche", `https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${e(c.name)}`, "cm"]]),
     ["Ventes eBay récentes · PriceCharting", `https://www.pricecharting.com/search-products?type=prices&q=${e(c.name + " " + num + (official ? "/" + official : ""))}`, "pc"],
@@ -987,7 +1043,7 @@ function linksHTML(c) {
     ["Leboncoin", `https://www.leboncoin.fr/recherche?text=${e(q)}`, "lb"],
   ];
   // PriceCharting ne connaît que les noms anglais : on remplace le nom dès qu'on l'a
-  fetch(`${API.replace("/fr", "/en")}/cards/${e(c.id)}`).then((r) => r.ok ? r.json() : null).then((en) => {
+  if (LANG === "fr") fetch(`https://api.tcgdex.net/v2/en/cards/${e(c.id)}`).then((r) => r.ok ? r.json() : null).then((en) => {
     const a = document.querySelector('.links a[data-k="pc"]');
     if (en?.name && a) a.href = `https://www.pricecharting.com/search-products?type=prices&q=${e(en.name + " " + num + (official ? "/" + official : ""))}`;
   }).catch(() => {});
@@ -1091,13 +1147,13 @@ function noteSeenSet(sid) {
 function addToLot(c, ref = refPrice(c), asked = null) {
   noteSeenSet(c.set?.id);
   const official = c.set?.cardCount?.official;
-  state.lot.unshift({ id: c.id, name: c.name, num: `${c.localId}${official ? "/" + official : ""}`, set: c.set?.name || "", image: c.image,
+  state.lot.unshift({ id: c.id, lang: LANG, name: c.name, num: `${c.localId}${official ? "/" + official : ""}`, set: c.set?.name || "", image: c.image,
     price: ref.price, version: ref.vs.length > 1 ? ref.v.label : null, cond: ref.cond.k < 1 ? ref.cond.label : null, asked });
   save("lot", state.lot); renderLot();
 }
 
-async function showCardById(id) {
-  try { const c = await api(`/cards/${encodeURIComponent(id)}`); if (c) showCard(c); else toast("Carte introuvable"); }
+async function showCardById(id, lang = LANG) {
+  try { const c = await api(`/cards/${encodeURIComponent(id)}`, lang); if (c) showCard(c); else toast("Carte introuvable"); }
   catch (e) { toast(e.message); }
 }
 
@@ -1317,7 +1373,7 @@ function renderLot() {
     row.querySelector("b").textContent = x.name;
     row.querySelector(".who span").textContent = [x.num, x.set, x.version, x.cond, x.pending ? "prix en attente de réseau" : null,
       x.asked != null ? "demandé " + eur(x.asked) : null].filter(Boolean).join(" · ");
-    row.querySelector(".who").addEventListener("click", () => showCardById(x.id));
+    row.querySelector(".who").addEventListener("click", () => showCardById(x.id, x.lang || "fr"));
     row.querySelector(".rm").addEventListener("click", () => { state.lot.splice(i, 1); save("lot", state.lot); renderLot(); });
     list.append(row);
   });
@@ -1331,6 +1387,9 @@ $("offer-seg").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-k]"); if (!b) return;
   save("offer", +b.dataset.k); haptic("tap"); renderLot();
 });
+// Langue des cartes : on recharge l'appli (base de cartes, index et lecture du nom changent).
+$("opt-lang").value = LANG;
+$("opt-lang").addEventListener("change", (e) => { save("lang", e.target.value); location.reload(); });
 $("errors-share").addEventListener("click", shareErrors);
 let errClearArmed = false;
 $("errors-clear").addEventListener("click", () => {

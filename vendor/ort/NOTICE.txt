@@ -1,0 +1,2 @@
+onnxruntime-web 1.19.2 — Copyright (c) Microsoft Corporation. Licence MIT.
+https://github.com/microsoft/onnxruntime

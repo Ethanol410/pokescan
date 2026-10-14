@@ -1,6 +1,6 @@
 # PokéScan
 
-Web app pour téléphone : tu vises une carte Pokémon (française), elle la reconnaît à son image et affiche son prix Cardmarket, l'évolution sur 30 jours, et te dit si le prix du vendeur est une bonne affaire. Pensée pour les braderies : on enchaîne les cartes sans toucher l'écran.
+Web app pour téléphone : tu vises une carte Pokémon (française, anglaise ou japonaise), elle la reconnaît à son image grâce à un petit modèle de vision qui tourne sur le téléphone et affiche son prix Cardmarket, l'évolution sur 30 jours, et te dit si le prix du vendeur est une bonne affaire. Pensée pour les braderies : on enchaîne les cartes sans toucher l'écran.
 
 **Appli en ligne : https://pokescan-gamma.vercel.app**
 
@@ -10,7 +10,8 @@ Web app pour téléphone : tu vises une carte Pokémon (française), elle la rec
 2. Ajoute-la à l'écran d'accueil :
    - **iPhone (Safari)** : bouton Partager → *Sur l'écran d'accueil*.
    - **Android (Chrome)** : menu ⋮ → *Installer l'application*.
-3. Ouvre-la une première fois en Wi-Fi : la base d'images des cartes (environ 6 Mo) et le module de lecture des numéros se téléchargent et restent sur le téléphone. La reconnaissance marche ensuite sans réseau (il en faut juste pour le prix).
+3. Ouvre-la une première fois en Wi-Fi : le modèle de vision et la base des cartes (environ 25 Mo en tout, moins de 10 Mo transférés grâce à la compression), la base d'empreintes (6 Mo) et le module de lecture des numéros se téléchargent et restent sur le téléphone. La reconnaissance marche ensuite sans réseau (il en faut juste pour le prix).
+4. Cartes anglaises ou japonaises : *Réglages → Langue des cartes*.
 
 ## Utilisation
 
@@ -64,21 +65,28 @@ Quand la carte est immobile, l'appli essaie dans cet ordre :
 | Étape | Méthode |
 |---|---|
 | 0. Repérage | L'appli cherche la carte dans l'image (le rectangle au format carte dont le contour est le plus net), même si elle ne remplit pas le cadre ou est décalée. Les étapes suivantes travaillent sur la carte seule, sans la main autour. |
-| 1. Image | L'image de la carte est réduite à une empreinte de 12×16 pixels en couleur (moyennes exactes par bloc, même résultat sur iPhone et Android), comparée aux empreintes de 18 604 cartes françaises (TCGdex ; image anglaise quand la française manque). Reflets ignorés, plusieurs cadrages essayés. La carte est acceptée si elle est nettement plus proche que toutes les autres, et retrouvée sur deux images (ou une seule si l'écart est très net). Environ 20 ms par image. |
+| 1. Image | **Modèle de vision** : un petit réseau de neurones (LCNet, 4,7 Mo, environ 30 ms par image) calcule une « signature » de 512 valeurs de la carte repérée, du cadre et du cadre resserré, comparée aux signatures de toutes les cartes de la langue choisie (18 604 en français, 19 732 en anglais, 3 878 en japonais). Le modèle a été réglé pour ignorer les défauts des photos : on lui a montré des dizaines de milliers de photos simulées (perspective, reflets, bandes holo, pochette, flou, lumière, fond) et appris une projection qui les rapproche de l'image d'origine. La carte est acceptée si elle est nettement plus proche que toute carte d'un autre nom, retrouvée sur deux images (ou une seule si l'écart est très net). Tant que le modèle n'est pas chargé, l'ancienne empreinte de 12×16 pixels (`match.js`) prend le relais. |
 | 2. Rééditions | Si la même illustration existe dans plusieurs extensions, l'appli lit le numéro pour choisir, sinon elle te montre les versions en image. |
 | 3. IA (option) | Avec une clé API Anthropic, si l'image ne suffit pas après ~1 s, la photo part à Claude Haiku, qui renvoie nom, numéro et extension. Une seule fois par carte. |
 | 4. Numéro | Sinon, Tesseract.js lit le numéro imprimé en bas (`133/128`) ; il est validé dès qu'il est lu deux fois en 8 secondes. Le total (`/128`) désigne l'extension ; s'il y a deux numéros (ex. `045/128 ★23/30` des cartes 30ᵉ anniversaire), c'est le principal qui compte. Le numéro est lu sur le cadre et, à tour de rôle, sur la carte repérée. |
-| 5. Vérification | Le numéro lu est **contrôlé par l'image** : les cartes portant ce numéro sont classées parmi les 18 604 selon leurs contours (plus robustes aux reflets de toploader que les couleurs). Une carte qui ne ressemble pas à l'image est refusée : un numéro mal lu (`111/10`, `100/107` au lieu de `100/101`) ne donne plus de fausse carte ni de faux « absente de la base ». |
+| 5. Vérification | Le numéro lu est **contrôlé par l'image** : la carte qui porte ce numéro doit être parmi les 50 plus ressemblantes de toute la base, selon le modèle de vision. Une carte qui ne ressemble pas à l'image est refusée : un numéro mal lu (`111/10`, `100/107` au lieu de `100/101`) ne donne plus de fausse carte ni de faux « absente de la base ». |
 | 6. Nom (plan B) | Si le numéro lu ne colle pas (un chiffre manqué : `41/146` au lieu de `141/146`, fréquent sur les full art en boîtier), l'appli lit le nom en haut de la carte et cherche, dans les extensions de ce total, la carte de ce nom au numéro voisin ; l'image départage (version normale ou full art), sinon elle te propose les 2-3 versions. |
 | Prix | API TCGdex (gratuite, sans clé) : Cardmarket en € (mis à jour chaque jour), TCGplayer en $, prix par version (1re édition, reverse…). |
+| Langues | Français, anglais, japonais (réglages) : base de cartes TCGdex, index du modèle de vision et lecture du nom propres à chaque langue. Les cartes japonaises ont moins d'images dans TCGdex (3 878) : le numéro prend plus souvent le relais. |
 | Hors ligne | Un service worker garde l'appli, la base d'images, les prix et images des cartes déjà vues ou préparées (caches conservés d'une version à l'autre) ; le lot, les erreurs notées et la clé restent sur le téléphone. |
 
 ### Fiabilité mesurée
 
-Sur 132 images de trois vraies vidéos d'iPhone (Safari, cartes en toploader, holos de l'extension 30ᵉ Anniversaire, anciennes cartes EX) :
-- **Image seule** : aucune mauvaise carte acceptée ; les images sans carte sont toutes refusées. Elle reconnaît surtout les cartes au dessin net (Électhor) ; les holos passent par le numéro.
-- **Numéro + vérification par l'image** : grâce au repérage de la carte, la bonne carte passe le contrôle dans 3 images sur 4 (contre 2 sur 3 avant), et sur au moins une image pour chacune des 13 cartes testées ; une carte prise au hasard ne passe qu'environ 1 fois sur 20.
-- Le plus fiable reste l'IA (option) pour les cartes brillantes, anciennes ou abîmées.
+Sur 146 images de quatre vraies vidéos d'iPhone (Safari, cartes en toploader et en boîtier, holos de l'extension 30ᵉ Anniversaire, full art, anciennes cartes EX ; 14 cartes différentes), avec le code de l'appli :
+
+| | Modèle de vision | Ancienne empreinte |
+|---|---|---|
+| Bonne carte classée 1re sur 18 604 | **63 %** des images | 6 % |
+| Reconnaissance par l'image seule, sans aucune erreur | 35 % des images, 11 cartes sur 14 | 7 % |
+| Vérification d'un numéro lu : la bonne carte passe | **83 %** | 73 % |
+| … une carte prise au hasard passe | **0,3 %** | 5 % |
+
+Les cartes restantes (holo très brillante sous plastique) passent par la lecture du numéro, vérifiée par le modèle. Le plus fiable reste l'IA (option) pour les cartes abîmées ou très mal éclairées.
 
 ## Activer l'IA (optionnel)
 
@@ -98,13 +106,13 @@ Coût : environ 1 centime pour 100 scans. La clé reste sur ton téléphone et n
 
 ## Développement
 
-Site statique, sans build : `index.html`, `app.js`, `match.js`, `locate.js`, `sw.js`.
+Site statique, sans build : `index.html`, `app.js`, `vision.js`, `match.js`, `locate.js`, `sw.js`.
 
 ```bash
 python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche sur localhost)
 ```
 
-**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v13`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
+**Mettre à jour l'appli** : modifie les fichiers, augmente `VERSION` dans `sw.js` (ex. `pokescan-v14`) pour que les téléphones récupèrent la nouvelle version, puis `git push` sur `main`. Vercel redéploie en moins d'une minute. Sur le téléphone, ferme et rouvre l'appli.
 
 **Base d'images** : construite par la tâche GitHub Actions *Index des cartes* (`.github/workflows/index.yml`), chaque lundi, à chaque modification de `match.js`, ou à la demande (onglet *Actions* → *Index des cartes* → *Run workflow*). Elle lance `tools/build-index.mjs` dans un Chromium headless, qui calcule les empreintes avec le même code que l'appli (`match.js`) et enregistre `index/cards.json` (avec le numéro de version de l'algorithme, `algo` : l'appli ignore une base calculée avec un ancien algorithme) + `index/cards-<version>.bin` (288 octets par carte). En local :
 
@@ -112,14 +120,20 @@ python3 -m http.server 8000   # puis http://localhost:8000 (la caméra marche su
 npm i --no-save playwright && npx playwright install chromium && node tools/build-index.mjs
 ```
 
+**Modèle de vision** : construit par la tâche *Index modèle de vision* (`.github/workflows/emb.yml`, `tools/build_emb.py`). Chaque lundi, elle ajoute les nouvelles cartes aux index `index/fr|en|ja/emb-<version>.bin` (512 octets par carte). Avec l'option *rebuild*, elle réapprend la projection (photos simulées : `tools/bench_aug.py`) et refait le modèle `models/card-<version>.onnx` et tous les index. Le moteur onnxruntime-web est servi par l'appli (`vendor/ort/`, copié par la tâche *Fichiers onnxruntime-web*). Le choix du modèle a été fait avec *Banc d'essai modèles* (`tools/bench_models.py`) : LCNet, EfficientNet-B0, MobileNetV3 et ResMLP-DINO comparés sur les vidéos réelles ; LCNet, le plus petit, était aussi le meilleur.
+
 ### Fichiers
 
 - `index.html` : interface (styles inclus)
 - `app.js` : caméra, scan auto, IA, lecture du numéro, recherche, fiche prix, rafale, lot, réglages
-- `match.js` : empreintes d'images et recherche dans la base
+- `vision.js` : modèle de vision (signature de la photo, recherche dans l'index)
+- `models/`, `index/fr|en|ja/` : modèle de vision et index par langue (générés)
+- `vendor/ort/` : moteur onnxruntime-web (licence MIT)
+- `match.js` : empreintes simples (ancienne méthode, sert de relais) et recherche dans la base
 - `locate.js` : repérage de la carte dans l'image
 - `index/` : base d'images (générée, ne pas modifier à la main)
-- `tools/build-index.mjs` + `.github/workflows/index.yml` : construction de la base
+- `tools/build-index.mjs` + `.github/workflows/index.yml` : construction de la base d'empreintes simples
+- `tools/build_emb.py`, `tools/bench_aug.py`, `tools/bench_models.py` + `.github/workflows/emb.yml`, `bench.yml`, `vendor.yml` : modèle de vision
 - `sw.js` : fonctionnement hors ligne
 - `manifest.webmanifest` + `icons/` : installation sur l'écran d'accueil
 - `vercel.json` : en-têtes (caméra, cache de la base d'images, pas de cache sur le service worker)
