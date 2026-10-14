@@ -40,10 +40,24 @@ def feature_model(name):
     inits = [i for i in g.initializer if i.name in needed]
     del g.initializer[:]; g.initializer.extend(inits)
     fp = f"{OUT}/models/{name}.fp32.onnx"; onnx.save(m, fp)
-    q = f"{OUT}/models/{name}.int8.onnx"
-    quantize_dynamic(fp, q, weight_type=QuantType.QInt8)
-    print(name, "fp32", os.path.getsize(fp) // 1024, "Ko  int8", os.path.getsize(q) // 1024, "Ko", flush=True)
-    return q
+    # Version allégée : poids stockés en float16, reconvertis en float32 au chargement (Cast).
+    h = f"{OUT}/models/{name}.fp16w.onnx"; onnx.save(half_weights(onnx.load(fp)), h)
+    print(name, "fp32", os.path.getsize(fp) // 1024, "Ko  poids fp16", os.path.getsize(h) // 1024, "Ko", flush=True)
+    return h
+
+def half_weights(m):
+    from onnx import numpy_helper
+    g = m.graph; casts = []; new = []
+    for init in g.initializer:
+        a = numpy_helper.to_array(init)
+        if a.dtype == np.float32 and a.size >= 1024:
+            new.append(numpy_helper.from_array(a.astype(np.float16), init.name + "_h"))
+            casts.append(helper.make_node("Cast", [init.name + "_h"], [init.name], to=onnx.TensorProto.FLOAT))
+        else:
+            new.append(init)
+    del g.initializer[:]; g.initializer.extend(new)
+    nodes = list(g.node); del g.node[:]; g.node.extend(casts + nodes)
+    return m
 
 def prep(im):
     im = im.convert("RGB").resize((224, 224), Image.BILINEAR)
